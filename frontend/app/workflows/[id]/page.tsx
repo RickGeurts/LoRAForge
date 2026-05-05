@@ -12,8 +12,12 @@ export default async function WorkflowDetailPage({
 }) {
   const { id } = await params;
   let workflow: Awaited<ReturnType<typeof api.workflow>>;
+  let adapters: Awaited<ReturnType<typeof api.adapters>> = [];
   try {
-    workflow = await api.workflow(id);
+    [workflow, adapters] = await Promise.all([
+      api.workflow(id),
+      api.adapters().catch(() => []),
+    ]);
   } catch (e) {
     if (e instanceof Error && /404/.test(e.message)) notFound();
     throw e;
@@ -37,7 +41,7 @@ export default async function WorkflowDetailPage({
           {workflow.edges.length} edges
         </p>
       </div>
-      <WorkflowEditor workflow={workflow} />
+      <WorkflowEditor workflow={workflow} adapters={adapters} />
     </div>
   );
 }

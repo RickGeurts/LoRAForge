@@ -15,6 +15,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.models.adapter import Adapter
 from app.models.run import RunOutput, TraceEntry, TraceStatus
 from app.models.workflow import Workflow, WorkflowNode
 from app.services import ollama_client
@@ -102,15 +103,19 @@ def _run_ai_node(
     node: WorkflowNode,
     inputs: dict[str, Any],
     model: str | None,
+    *,
+    prefix: str = "",
 ) -> tuple[TraceStatus, str, str | None, int | None, int | None]:
     """Call Ollama for AI nodes, falling back to the mock summary on failure.
 
-    Returns (status, summary, model, total_tokens, latency_ms).
+    `prefix` lets the caller prepend a short note (e.g. base-model fallback
+    warning) to the rendered summary. Returns
+    (status, summary, model, total_tokens, latency_ms).
     """
     template = _AI_PROMPTS.get(node.type)
     if template is None:
         status, summary = _mock_summary(node, inputs)
-        return status, summary, None, None, None
+        return status, prefix + summary, None, None, None
 
     document = str(inputs.get("document") or "the input document")
     prompt = template.format(document=document)
@@ -118,9 +123,15 @@ def _run_ai_node(
 
     if result.stub or not result.response:
         status, summary = _mock_summary(node, inputs)
-        return status, summary, None, None, None
+        return status, prefix + summary, None, None, None
 
-    return ("ok", result.response, result.model, result.total_tokens, result.latency_ms)
+    return (
+        "ok",
+        prefix + result.response,
+        result.model,
+        result.total_tokens,
+        result.latency_ms,
+    )
 
 
 def _build_output(
@@ -148,12 +159,20 @@ def _build_output(
         entry.summary for entry in trace if entry.status != "warn"
     ) or "Workflow executed without notable findings."
 
+    # If any AI step ran with a bound adapter, cite that adapter's version
+    # in the audit-relevant decision payload. Otherwise fall back so legacy
+    # workflows still produce a sensible value.
+    adapter_version = next(
+        (entry.adapter_version for entry in trace if entry.adapter_version),
+        _FALLBACK_ADAPTER_VERSION,
+    )
+
     return RunOutput(
         decision=decision,
         confidence=confidence,
         explanation=explanation,
         sources=sources,
-        adapterVersion=_FALLBACK_ADAPTER_VERSION,
+        adapterVersion=adapter_version,
         workflowVersion=workflow.version,
         timestamp=timestamp,
     )
@@ -165,29 +184,40 @@ def execute_workflow(
     *,
     started_at: datetime | None = None,
     use_ollama: bool | None = None,
+    adapters: dict[str, Adapter] | None = None,
 ) -> tuple[str, RunOutput, list[TraceEntry], datetime]:
     """Run a workflow against inputs.
 
     `use_ollama` defaults to whether the local runtime is reachable. Pass
     False explicitly (e.g. seed-time) to keep the executor deterministic.
 
+    `adapters` is the live registry, keyed by id. Used to resolve
+    workflow-node bindings: an AI node's `adapter_id` selects the base
+    model and is recorded in the trace for audit. When omitted, AI nodes
+    behave as before (global default model, no adapter citation).
+
     Returns (status, output, trace, finished_at).
     """
     started = started_at or datetime.now(timezone.utc)
-    chosen_model: str | None = None
+    adapters = adapters or {}
     if use_ollama is None:
         status_info = ollama_client.get_status()
         use_ollama = bool(status_info.get("reachable"))
+
+    installed_names: set[str] = set()
+    fallback_model: str | None = None
     if use_ollama:
         # Prefer the configured default if it's installed; otherwise pick the
         # first available model so we never call generate() with a name Ollama
         # rejects.
         installed = ollama_client.list_models()
-        installed_names = {m.get("name") for m in installed if not m.get("stub")}
+        installed_names = {
+            str(m.get("name") or "") for m in installed if not m.get("stub")
+        }
         if ollama_client.OLLAMA_DEFAULT_MODEL in installed_names:
-            chosen_model = ollama_client.OLLAMA_DEFAULT_MODEL
+            fallback_model = ollama_client.OLLAMA_DEFAULT_MODEL
         elif installed_names:
-            chosen_model = next(iter(installed_names))
+            fallback_model = next(iter(installed_names))
         else:
             use_ollama = False
 
@@ -195,14 +225,29 @@ def execute_workflow(
     cursor = started
     for node in _topological_order(workflow):
         node_started = cursor
+        adapter = adapters.get(node.adapter_id) if node.adapter_id else None
+        adapter_id = adapter.id if adapter else None
+        adapter_version = adapter.version if adapter else None
+
         if use_ollama and node.group == "ai":
-            status, summary, model, tokens, latency_ms = _run_ai_node(
-                node, inputs, chosen_model
+            base_model, status_override, prefix = _resolve_ai_model(
+                node, adapter, fallback_model, installed_names
             )
-            # Use real wall-clock latency if we have it; otherwise step ms.
+            status, summary, model, tokens, latency_ms = _run_ai_node(
+                node, inputs, base_model, prefix=prefix
+            )
+            if status_override is not None:
+                status = status_override
             step_ms = latency_ms if latency_ms is not None else _NODE_STEP_MS
         else:
             status, summary = _mock_summary(node, inputs)
+            if node.adapter_id and adapter is None:
+                # Binding points at a deleted adapter — surface it.
+                status = "warn"
+                summary = (
+                    f"[binding broken: adapter {node.adapter_id!r} not in registry] "
+                    + summary
+                )
             model, tokens, latency_ms = None, None, None
             step_ms = _NODE_STEP_MS
 
@@ -220,6 +265,8 @@ def execute_workflow(
                 model=model,
                 totalTokens=tokens,
                 latencyMs=latency_ms,
+                adapterId=adapter_id,
+                adapterVersion=adapter_version,
             )
         )
 
@@ -230,3 +277,36 @@ def execute_workflow(
         else "completed"
     )
     return final_status, output, trace, cursor
+
+
+def _resolve_ai_model(
+    node: WorkflowNode,
+    adapter: Adapter | None,
+    fallback_model: str | None,
+    installed_names: set[str],
+) -> tuple[str | None, TraceStatus | None, str]:
+    """Pick the base model for an AI node and build any summary prefix.
+
+    Returns (model_name, forced_status_or_none, summary_prefix).
+    """
+    # No binding — keep the previous behaviour.
+    if adapter is None:
+        if node.adapter_id:
+            return (
+                fallback_model,
+                "warn",
+                f"[binding broken: adapter {node.adapter_id!r} not in registry] ",
+            )
+        return fallback_model, None, ""
+
+    # Adapter exists. Prefer its baseModel, but only if Ollama actually has
+    # that model installed; otherwise warn and fall back so the run still
+    # completes.
+    if adapter.base_model in installed_names:
+        return adapter.base_model, None, f"[adapter {adapter.id} v{adapter.version}] "
+    return (
+        fallback_model,
+        "warn",
+        f"[adapter {adapter.id} requires base model {adapter.base_model!r}, "
+        f"not installed — falling back to {fallback_model!r}] ",
+    )

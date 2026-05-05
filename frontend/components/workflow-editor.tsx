@@ -27,6 +27,7 @@ import {
 
 import {
   api,
+  type Adapter,
   type NodeGroup,
   type Workflow as ApiWorkflow,
 } from "@/lib/api";
@@ -92,6 +93,10 @@ type FlowNodeData = {
   label: string;
   nodeType: string;
   config: Record<string, unknown>;
+  adapterId: string | null;
+  // Display-only — set during workflowToFlow so the node card can show
+  // a human-readable badge without redoing the lookup on every render.
+  adapterLabel: string | null;
 };
 
 type FlowNode = Node<FlowNodeData, "loraforge">;
@@ -113,6 +118,13 @@ function LoraForgeNode({ data }: NodeProps<FlowNode>) {
         {data.label}
       </p>
       <p className="text-[10px] font-mono text-zinc-500">{data.nodeType}</p>
+      {data.adapterId ? (
+        <p className="mt-1 text-[10px] font-mono text-zinc-700 dark:text-zinc-300 bg-white/60 dark:bg-zinc-900/60 rounded px-1 py-0.5 truncate max-w-[180px]">
+          ⚡ {data.adapterLabel ?? data.adapterId}
+        </p>
+      ) : data.group === "ai" ? (
+        <p className="mt-1 text-[10px] text-zinc-400 italic">no adapter bound</p>
+      ) : null}
       <Handle type="source" position={Position.Right} className="!bg-zinc-400" />
     </div>
   );
@@ -125,7 +137,19 @@ function autoPosition(index: number): { x: number; y: number } {
   return { x: 40 + (index % 6) * 220, y: 80 + Math.floor(index / 6) * 140 };
 }
 
-function workflowToFlow(workflow: ApiWorkflow): { nodes: FlowNode[]; edges: Edge[] } {
+function adapterLabelFor(
+  id: string | null,
+  adapters: Adapter[],
+): string | null {
+  if (!id) return null;
+  const a = adapters.find((x) => x.id === id);
+  return a ? `${a.name} v${a.version}` : id;
+}
+
+function workflowToFlow(
+  workflow: ApiWorkflow,
+  adapters: Adapter[],
+): { nodes: FlowNode[]; edges: Edge[] } {
   const nodes: FlowNode[] = workflow.nodes.map((n, i) => ({
     id: n.id,
     type: "loraforge",
@@ -135,6 +159,8 @@ function workflowToFlow(workflow: ApiWorkflow): { nodes: FlowNode[]; edges: Edge
       label: n.label,
       nodeType: n.type,
       config: n.config,
+      adapterId: n.adapterId ?? null,
+      adapterLabel: adapterLabelFor(n.adapterId ?? null, adapters),
     },
   }));
   const edges: Edge[] = workflow.edges.map((e) => ({
@@ -160,6 +186,7 @@ function flowToWorkflow(
       label: n.data.label,
       config: n.data.config,
       position: { x: n.position.x, y: n.position.y },
+      adapterId: n.data.adapterId,
     })),
     edges: edges.map((e) => ({
       id: e.id,
@@ -206,20 +233,36 @@ function validate(nodes: FlowNode[], edges: Edge[]): string | null {
   return null;
 }
 
-export function WorkflowEditor({ workflow }: { workflow: ApiWorkflow }) {
+export function WorkflowEditor({
+  workflow,
+  adapters,
+}: {
+  workflow: ApiWorkflow;
+  adapters: Adapter[];
+}) {
   return (
     <ReactFlowProvider>
-      <EditorInner workflow={workflow} />
+      <EditorInner workflow={workflow} adapters={adapters} />
     </ReactFlowProvider>
   );
 }
 
-function EditorInner({ workflow }: { workflow: ApiWorkflow }) {
-  const initial = useMemo(() => workflowToFlow(workflow), [workflow]);
+function EditorInner({
+  workflow,
+  adapters,
+}: {
+  workflow: ApiWorkflow;
+  adapters: Adapter[];
+}) {
+  const initial = useMemo(
+    () => workflowToFlow(workflow, adapters),
+    [workflow, adapters],
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const { screenToFlowPosition } = useReactFlow();
   const router = useRouter();
@@ -259,6 +302,8 @@ function EditorInner({ workflow }: { workflow: ApiWorkflow }) {
           label: item.label,
           nodeType: item.type,
           config: {},
+          adapterId: null,
+          adapterLabel: null,
         },
       };
       setNodes((ns) => [...ns, newNode]);
@@ -313,6 +358,35 @@ function EditorInner({ workflow }: { workflow: ApiWorkflow }) {
       setRunning(false);
     }
   }, [workflow, nodes, edges, router]);
+
+  const onSelectionChange = useCallback(
+    ({ nodes: selected }: { nodes: Node[]; edges: Edge[] }) => {
+      setSelectedNodeId(selected[0]?.id ?? null);
+    },
+    [],
+  );
+
+  const setNodeAdapter = useCallback(
+    (nodeId: string, adapterId: string | null) => {
+      setNodes((ns) =>
+        ns.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  adapterId,
+                  adapterLabel: adapterLabelFor(adapterId, adapters),
+                },
+              }
+            : n,
+        ),
+      );
+    },
+    [setNodes, adapters],
+  );
+
+  const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
 
   return (
     <div className="flex h-[calc(100vh-12rem)] min-h-[480px] border-t border-zinc-200 dark:border-zinc-800">
@@ -381,6 +455,7 @@ function EditorInner({ workflow }: { workflow: ApiWorkflow }) {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onSelectionChange={onSelectionChange}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
@@ -392,7 +467,105 @@ function EditorInner({ workflow }: { workflow: ApiWorkflow }) {
           <MiniMap pannable zoomable />
         </ReactFlow>
       </div>
+
+      <Inspector
+        node={selectedNode}
+        adapters={adapters}
+        onAdapterChange={setNodeAdapter}
+      />
     </div>
+  );
+}
+
+function Inspector({
+  node,
+  adapters,
+  onAdapterChange,
+}: {
+  node: FlowNode | null;
+  adapters: Adapter[];
+  onAdapterChange: (nodeId: string, adapterId: string | null) => void;
+}) {
+  if (!node) {
+    return (
+      <aside className="w-64 shrink-0 border-l border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 p-4 text-xs text-zinc-500">
+        Select a node to inspect or bind an adapter.
+      </aside>
+    );
+  }
+
+  const isAi = node.data.group === "ai";
+  // Adapters in the registry that match this node's task type — keeps the
+  // dropdown short and reflects the "constrained workflow" principle.
+  const compatible = adapters.filter((a) => a.taskType === node.data.nodeType);
+  const incompatible = adapters.filter((a) => a.taskType !== node.data.nodeType);
+
+  return (
+    <aside className="w-64 shrink-0 border-l border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 p-4 overflow-y-auto">
+      <p className="text-xs uppercase tracking-wide text-zinc-500">
+        Inspector
+      </p>
+      <p className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-50">
+        {node.data.label}
+      </p>
+      <p className="mt-0.5 text-[11px] font-mono text-zinc-500">
+        {node.data.nodeType} · {node.data.group}
+      </p>
+
+      {isAi ? (
+        <div className="mt-4">
+          <label className="text-[11px] uppercase tracking-wide text-zinc-500">
+            Adapter binding
+          </label>
+          <select
+            value={node.data.adapterId ?? ""}
+            onChange={(e) =>
+              onAdapterChange(node.id, e.target.value || null)
+            }
+            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1.5 text-xs"
+          >
+            <option value="">(no adapter)</option>
+            {compatible.length > 0 ? (
+              <optgroup label={`Matching ${node.data.nodeType}`}>
+                {compatible.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} v{a.version} · {a.baseModel}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+            {incompatible.length > 0 ? (
+              <optgroup label="Other adapters (task-type mismatch)">
+                {incompatible.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name} v{a.version} · {a.taskType}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+          </select>
+          {node.data.adapterId ? (
+            <button
+              type="button"
+              onClick={() => onAdapterChange(node.id, null)}
+              className="mt-2 text-[11px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-50 underline"
+            >
+              Detach adapter
+            </button>
+          ) : null}
+          <p className="mt-3 text-[11px] text-zinc-500 leading-relaxed">
+            The bound adapter&apos;s base model is used at run time. If it
+            isn&apos;t installed in Ollama, the executor falls back to an
+            available model and the trace records a warning.
+          </p>
+        </div>
+      ) : (
+        <p className="mt-4 text-[11px] text-zinc-500 leading-relaxed">
+          Adapter binding only applies to AI-group nodes. This node runs
+          deterministic logic.
+        </p>
+      )}
+    </aside>
   );
 }
 

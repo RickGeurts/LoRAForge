@@ -182,6 +182,14 @@ export default async function RunDetailPage({
                     </p>
                     <p className="mt-0.5 text-[11px] font-mono text-zinc-500">
                       {formatDateTime(entry.startedAt)}
+                      {entry.adapterId ? (
+                        <>
+                          {" · "}
+                          <span className="text-zinc-700 dark:text-zinc-300">
+                            ⚡ {entry.adapterId} v{entry.adapterVersion}
+                          </span>
+                        </>
+                      ) : null}
                       {entry.model ? (
                         <>
                           {" · "}

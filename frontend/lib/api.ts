@@ -45,6 +45,7 @@ export type WorkflowNode = {
   label: string;
   config: Record<string, unknown>;
   position: { x: number; y: number } | null;
+  adapterId: string | null;
 };
 
 export type WorkflowEdge = { id: string; source: string; target: string };
@@ -81,6 +82,8 @@ export type TraceEntry = {
   model: string | null;
   totalTokens: number | null;
   latencyMs: number | null;
+  adapterId: string | null;
+  adapterVersion: string | null;
 };
 
 export type Run = {

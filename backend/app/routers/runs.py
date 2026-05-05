@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.db import get_session
+from app.models.adapter import AdapterTable
 from app.models.run import Run, RunCreate, RunTable
 from app.models.workflow import WorkflowTable
 from app.services.executor import execute_workflow
@@ -44,8 +45,11 @@ def create_run(
 
     started_at = datetime.now(timezone.utc)
     workflow = workflow_row.to_api()
+    adapters = {
+        row.id: row.to_api() for row in session.exec(select(AdapterTable)).all()
+    }
     final_status, output, trace, finished_at = execute_workflow(
-        workflow, payload.inputs, started_at=started_at
+        workflow, payload.inputs, started_at=started_at, adapters=adapters
     )
 
     run = Run(

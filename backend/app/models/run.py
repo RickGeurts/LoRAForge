@@ -26,6 +26,12 @@ class TraceEntry(BaseModel):
     model: str | None = None
     total_tokens: int | None = PydanticField(default=None, alias="totalTokens")
     latency_ms: int | None = PydanticField(default=None, alias="latencyMs")
+    # Audit binding: which adapter (and its version) was responsible for
+    # this step. Null for steps that ran without a bound adapter.
+    adapter_id: str | None = PydanticField(default=None, alias="adapterId")
+    adapter_version: str | None = PydanticField(
+        default=None, alias="adapterVersion"
+    )
 
     model_config = {"populate_by_name": True}
 

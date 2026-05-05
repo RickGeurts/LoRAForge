@@ -21,6 +21,12 @@ class WorkflowNode(BaseModel):
     label: str
     config: dict[str, Any] = PydanticField(default_factory=dict)
     position: NodePosition | None = None
+    # Bind an adapter from the registry. Currently only meaningful for AI
+    # nodes; other groups ignore it. Stored in the workflow JSON so the
+    # binding survives saves and shows up in the audit trail.
+    adapter_id: str | None = PydanticField(default=None, alias="adapterId")
+
+    model_config = {"populate_by_name": True}
 
 
 class WorkflowEdge(BaseModel):

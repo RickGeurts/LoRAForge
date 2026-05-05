@@ -9,12 +9,18 @@ from sqlmodel import Field, SQLModel
 NodeGroup = Literal["documents", "ai", "rules", "logic", "output"]
 
 
+class NodePosition(BaseModel):
+    x: float
+    y: float
+
+
 class WorkflowNode(BaseModel):
     id: str
     type: str
     group: NodeGroup
     label: str
     config: dict[str, Any] = PydanticField(default_factory=dict)
+    position: NodePosition | None = None
 
 
 class WorkflowEdge(BaseModel):

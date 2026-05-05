@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from app.models.adapter import Adapter, AdapterTable, EvaluationMetrics
 from app.models.run import Run, RunOutput, RunTable
 from app.models.workflow import (
+    NodePosition,
     Workflow,
     WorkflowEdge,
     WorkflowNode,
@@ -54,13 +55,13 @@ def _seed_workflows() -> list[Workflow]:
             version="0.1.0",
             description="Prospectus → Extract → Classify → Validate → Review → Output",
             nodes=[
-                WorkflowNode(id="n1", type="prospectus_loader", group="documents", label="Prospectus Loader"),
-                WorkflowNode(id="n2", type="clause_extractor", group="ai", label="Clause Extractor"),
-                WorkflowNode(id="n3", type="mrel_classifier", group="ai", label="MREL Classifier"),
-                WorkflowNode(id="n4", type="validator", group="rules", label="Validator"),
-                WorkflowNode(id="n5", type="confidence_filter", group="rules", label="Confidence Filter"),
-                WorkflowNode(id="n6", type="human_review", group="logic", label="Human Review"),
-                WorkflowNode(id="n7", type="decision_output", group="output", label="Decision Output"),
+                WorkflowNode(id="n1", type="prospectus_loader", group="documents", label="Prospectus Loader", position=NodePosition(x=40, y=80)),
+                WorkflowNode(id="n2", type="clause_extractor", group="ai", label="Clause Extractor", position=NodePosition(x=260, y=80)),
+                WorkflowNode(id="n3", type="mrel_classifier", group="ai", label="MREL Classifier", position=NodePosition(x=480, y=80)),
+                WorkflowNode(id="n4", type="validator", group="rules", label="Validator", position=NodePosition(x=700, y=80)),
+                WorkflowNode(id="n5", type="confidence_filter", group="rules", label="Confidence Filter", position=NodePosition(x=920, y=80)),
+                WorkflowNode(id="n6", type="human_review", group="logic", label="Human Review", position=NodePosition(x=1140, y=80)),
+                WorkflowNode(id="n7", type="decision_output", group="output", label="Decision Output", position=NodePosition(x=1360, y=80)),
             ],
             edges=[
                 WorkflowEdge(id="e1", source="n1", target="n2"),

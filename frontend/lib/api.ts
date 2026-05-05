@@ -36,19 +36,26 @@ export type Adapter = {
   createdAt: string;
 };
 
+export type NodeGroup = "documents" | "ai" | "rules" | "logic" | "output";
+
+export type WorkflowNode = {
+  id: string;
+  type: string;
+  group: NodeGroup;
+  label: string;
+  config: Record<string, unknown>;
+  position: { x: number; y: number } | null;
+};
+
+export type WorkflowEdge = { id: string; source: string; target: string };
+
 export type Workflow = {
   id: string;
   name: string;
   version: string;
   description: string | null;
-  nodes: Array<{
-    id: string;
-    type: string;
-    group: string;
-    label: string;
-    config: Record<string, unknown>;
-  }>;
-  edges: Array<{ id: string; source: string; target: string }>;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
   createdAt: string;
   updatedAt: string;
 };

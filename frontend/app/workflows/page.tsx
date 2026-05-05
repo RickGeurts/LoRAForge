@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
@@ -14,7 +16,7 @@ export default async function WorkflowsPage() {
     <div className="flex flex-col">
       <PageHeader
         title="Workflows"
-        description="Visual, auditable workflow definitions. The drag-and-drop canvas (React Flow) lands in milestone 4."
+        description="Visual, auditable workflow definitions. Open one to edit it on the drag-and-drop canvas."
       />
       <section className="px-8 py-6 space-y-3 max-w-3xl">
         {error ? (
@@ -25,9 +27,10 @@ export default async function WorkflowsPage() {
           <p className="text-sm text-zinc-500">No workflows yet.</p>
         ) : (
           workflows.map((w) => (
-            <div
+            <Link
               key={w.id}
-              className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-5 bg-white dark:bg-zinc-950"
+              href={`/workflows/${w.id}`}
+              className="block rounded-lg border border-zinc-200 dark:border-zinc-800 p-5 bg-white dark:bg-zinc-950 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors"
             >
               <div className="flex items-baseline justify-between gap-3">
                 <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
@@ -39,9 +42,9 @@ export default async function WorkflowsPage() {
                 {w.description}
               </p>
               <p className="mt-2 text-xs text-zinc-500">
-                {w.nodes.length} nodes · {w.edges.length} edges
+                {w.nodes.length} nodes · {w.edges.length} edges · Open editor →
               </p>
-            </div>
+            </Link>
           ))
         )}
       </section>

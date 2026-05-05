@@ -1,38 +1,78 @@
-from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, select
 
-from fastapi import APIRouter
-
-from app.models.adapter import Adapter, EvaluationMetrics
+from app.db import get_session
+from app.models.adapter import Adapter, AdapterTable
 
 router = APIRouter(prefix="/adapters", tags=["adapters"])
 
 
-_MOCK_ADAPTERS: list[Adapter] = [
-    Adapter(
-        id="adp_mrel_v1",
-        name="MREL Eligibility Classifier",
-        baseModel="llama3.1:8b",
-        taskType="mrel_classifier",
-        version="0.1.0",
-        status="draft",
-        trainingDataSummary="120 annotated MREL prospectus excerpts (mock)",
-        evaluationMetrics=EvaluationMetrics(accuracy=0.0, notes="not yet trained"),
-        createdAt=datetime(2026, 5, 5, tzinfo=timezone.utc),
-    ),
-    Adapter(
-        id="adp_clause_v1",
-        name="Prospectus Clause Extractor",
-        baseModel="llama3.1:8b",
-        taskType="clause_extractor",
-        version="0.1.0",
-        status="draft",
-        trainingDataSummary=None,
-        evaluationMetrics=None,
-        createdAt=datetime(2026, 5, 5, tzinfo=timezone.utc),
-    ),
-]
+@router.get("", response_model=list[Adapter], response_model_by_alias=True)
+def list_adapters(session: Session = Depends(get_session)) -> list[Adapter]:
+    rows = session.exec(select(AdapterTable)).all()
+    return [row.to_api() for row in rows]
 
 
-@router.get("", response_model=list[Adapter])
-def list_adapters() -> list[Adapter]:
-    return _MOCK_ADAPTERS
+@router.get("/{adapter_id}", response_model=Adapter, response_model_by_alias=True)
+def get_adapter(
+    adapter_id: str, session: Session = Depends(get_session)
+) -> Adapter:
+    row = session.get(AdapterTable, adapter_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Adapter not found")
+    return row.to_api()
+
+
+@router.post(
+    "",
+    response_model=Adapter,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_adapter(
+    payload: Adapter, session: Session = Depends(get_session)
+) -> Adapter:
+    if session.get(AdapterTable, payload.id) is not None:
+        raise HTTPException(
+            status_code=409, detail=f"Adapter {payload.id} already exists"
+        )
+    row = AdapterTable.from_api(payload)
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row.to_api()
+
+
+@router.put(
+    "/{adapter_id}",
+    response_model=Adapter,
+    response_model_by_alias=True,
+)
+def replace_adapter(
+    adapter_id: str,
+    payload: Adapter,
+    session: Session = Depends(get_session),
+) -> Adapter:
+    if adapter_id != payload.id:
+        raise HTTPException(status_code=400, detail="Adapter ID mismatch")
+    existing = session.get(AdapterTable, adapter_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Adapter not found")
+    session.delete(existing)
+    session.flush()
+    new_row = AdapterTable.from_api(payload)
+    session.add(new_row)
+    session.commit()
+    session.refresh(new_row)
+    return new_row.to_api()
+
+
+@router.delete("/{adapter_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_adapter(
+    adapter_id: str, session: Session = Depends(get_session)
+) -> None:
+    row = session.get(AdapterTable, adapter_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Adapter not found")
+    session.delete(row)
+    session.commit()

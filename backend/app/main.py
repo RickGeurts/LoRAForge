@@ -1,12 +1,27 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import Session
 
+from app.db import engine, init_db
 from app.routers import adapters, ollama, runs, workflows
+from app.services.seed import seed_if_empty
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    with Session(engine) as session:
+        seed_if_empty(session)
+    yield
+
 
 app = FastAPI(
     title="LoRA Forge API",
     description="Local-first regulatory AI workflow backend",
-    version="0.1.0",
+    version="0.2.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

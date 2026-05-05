@@ -1,15 +1,27 @@
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8001";
 
-async function request<T>(path: string): Promise<T> {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     cache: "no-store",
     headers: { "Content-Type": "application/json" },
+    ...init,
   });
   if (!res.ok) {
     throw new Error(`API ${path} failed: ${res.status} ${res.statusText}`);
   }
   return (await res.json()) as T;
+}
+
+async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+  if (!res.ok) {
+    throw new Error(`API ${path} failed: ${res.status} ${res.statusText}`);
+  }
 }
 
 export type Adapter = {
@@ -60,6 +72,11 @@ export type Run = {
   finishedAt: string | null;
 };
 
+export type RunCreate = {
+  workflowId: string;
+  inputs?: Record<string, unknown>;
+};
+
 export type OllamaStatus = {
   reachable: boolean;
   baseUrl: string;
@@ -73,10 +90,35 @@ export type OllamaModel = {
   stub?: boolean;
 };
 
+const json = (body: unknown): RequestInit => ({
+  method: "POST",
+  body: JSON.stringify(body),
+});
+
 export const api = {
+  // Reads
   adapters: () => request<Adapter[]>("/adapters"),
+  adapter: (id: string) => request<Adapter>(`/adapters/${id}`),
   workflows: () => request<Workflow[]>("/workflows"),
+  workflow: (id: string) => request<Workflow>(`/workflows/${id}`),
   runs: () => request<Run[]>("/runs"),
+  run: (id: string) => request<Run>(`/runs/${id}`),
   ollamaStatus: () => request<OllamaStatus>("/ollama/status"),
   ollamaModels: () => request<OllamaModel[]>("/ollama/models"),
+
+  // Writes
+  createAdapter: (payload: Adapter) => request<Adapter>("/adapters", json(payload)),
+  replaceAdapter: (id: string, payload: Adapter) =>
+    request<Adapter>(`/adapters/${id}`, { ...json(payload), method: "PUT" }),
+  deleteAdapter: (id: string) =>
+    requestVoid(`/adapters/${id}`, { method: "DELETE" }),
+
+  createWorkflow: (payload: Workflow) =>
+    request<Workflow>("/workflows", json(payload)),
+  replaceWorkflow: (id: string, payload: Workflow) =>
+    request<Workflow>(`/workflows/${id}`, { ...json(payload), method: "PUT" }),
+  deleteWorkflow: (id: string) =>
+    requestVoid(`/workflows/${id}`, { method: "DELETE" }),
+
+  createRun: (payload: RunCreate) => request<Run>("/runs", json(payload)),
 };

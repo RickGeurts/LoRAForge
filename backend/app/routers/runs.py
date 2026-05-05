@@ -1,34 +1,57 @@
+import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlmodel import Session, select
 
-from app.models.run import Run, RunOutput
+from app.db import get_session
+from app.models.run import Run, RunCreate, RunTable
+from app.models.workflow import WorkflowTable
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
-_MOCK_RUNS: list[Run] = [
-    Run(
-        id="run_001",
-        workflowId="wf_mrel_template",
-        workflowVersion="0.1.0",
-        status="completed",
-        inputs={"document": "sample_prospectus.pdf"},
-        output=RunOutput(
-            decision="MREL-eligible",
-            confidence=0.87,
-            explanation="Subordination clause detected; maturity > 1 year.",
-            sources=["page 12 §4.2", "page 18 §6.1"],
-            adapterVersion="0.1.0",
-            workflowVersion="0.1.0",
-            timestamp=datetime(2026, 5, 5, tzinfo=timezone.utc),
-        ),
-        startedAt=datetime(2026, 5, 5, tzinfo=timezone.utc),
-        finishedAt=datetime(2026, 5, 5, tzinfo=timezone.utc),
-    ),
-]
+@router.get("", response_model=list[Run], response_model_by_alias=True)
+def list_runs(session: Session = Depends(get_session)) -> list[Run]:
+    rows = session.exec(select(RunTable)).all()
+    return [row.to_api() for row in rows]
 
 
-@router.get("", response_model=list[Run])
-def list_runs() -> list[Run]:
-    return _MOCK_RUNS
+@router.get("/{run_id}", response_model=Run, response_model_by_alias=True)
+def get_run(run_id: str, session: Session = Depends(get_session)) -> Run:
+    row = session.get(RunTable, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return row.to_api()
+
+
+@router.post(
+    "",
+    response_model=Run,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_run(
+    payload: RunCreate, session: Session = Depends(get_session)
+) -> Run:
+    workflow = session.get(WorkflowTable, payload.workflow_id)
+    if workflow is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workflow {payload.workflow_id} not found",
+        )
+    run = Run(
+        id=f"run_{uuid.uuid4().hex[:12]}",
+        workflowId=payload.workflow_id,
+        workflowVersion=workflow.version,
+        status="queued",
+        inputs=payload.inputs,
+        output=None,
+        startedAt=datetime.now(timezone.utc),
+        finishedAt=None,
+    )
+    row = RunTable.from_api(run)
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row.to_api()

@@ -19,7 +19,7 @@ export default async function WorkflowsPage() {
       <section className="px-8 py-6 space-y-3 max-w-3xl">
         {error ? (
           <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900 p-4 text-sm text-amber-900 dark:text-amber-200">
-            Backend unreachable — start the FastAPI server on :8000. ({error})
+            Backend unreachable — start the FastAPI server on :8001. ({error})
           </div>
         ) : workflows.length === 0 ? (
           <p className="text-sm text-zinc-500">No workflows yet.</p>

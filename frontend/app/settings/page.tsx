@@ -27,7 +27,7 @@ export default async function SettingsPage() {
           </h2>
           {error ? (
             <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">
-              Backend unreachable — start the FastAPI server on :8000.
+              Backend unreachable — start the FastAPI server on :8001.
             </p>
           ) : (
             <>

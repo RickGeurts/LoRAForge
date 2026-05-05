@@ -108,6 +108,63 @@ export type RunCreate = {
   inputs?: Record<string, unknown>;
 };
 
+export type DatasetSource = "file" | "text" | "external" | "mock";
+
+export type Dataset = {
+  id: string;
+  name: string;
+  taskType: string;
+  sourceType: DatasetSource;
+  summary: string;
+  rowCount: number;
+  createdAt: string;
+};
+
+export type DatasetCreate = {
+  name: string;
+  taskType: string;
+  sourceType: DatasetSource;
+  summary: string;
+  rowCount: number;
+};
+
+export type FineTuneStatus = "queued" | "running" | "completed" | "failed";
+
+export type FineTuneHyperparams = {
+  epochs: number;
+  learningRate: number;
+  batchSize: number;
+};
+
+export type FineTuneMetrics = {
+  accuracy: number | null;
+  f1: number | null;
+  evalLoss: number | null;
+  notes: string | null;
+};
+
+export type FineTuneRun = {
+  id: string;
+  datasetId: string;
+  baseModel: string;
+  adapterName: string;
+  taskType: string;
+  hyperparams: FineTuneHyperparams;
+  status: FineTuneStatus;
+  metrics: FineTuneMetrics | null;
+  producedAdapterId: string | null;
+  trace: TraceEntry[];
+  startedAt: string;
+  finishedAt: string | null;
+};
+
+export type FineTuneRunCreate = {
+  datasetId: string;
+  baseModel: string;
+  adapterName: string;
+  hyperparams?: FineTuneHyperparams;
+};
+
 export type OllamaStatus = {
   reachable: boolean;
   baseUrl: string;
@@ -155,4 +212,16 @@ export const api = {
     requestVoid(`/workflows/${id}`, { method: "DELETE" }),
 
   createRun: (payload: RunCreate) => request<Run>("/runs", json(payload)),
+
+  datasets: () => request<Dataset[]>("/datasets"),
+  dataset: (id: string) => request<Dataset>(`/datasets/${id}`),
+  createDataset: (payload: DatasetCreate) =>
+    request<Dataset>("/datasets", json(payload)),
+  deleteDataset: (id: string) =>
+    requestVoid(`/datasets/${id}`, { method: "DELETE" }),
+
+  finetuneRuns: () => request<FineTuneRun[]>("/finetune"),
+  finetuneRun: (id: string) => request<FineTuneRun>(`/finetune/${id}`),
+  createFinetuneRun: (payload: FineTuneRunCreate) =>
+    request<FineTuneRun>("/finetune", json(payload)),
 };

@@ -41,6 +41,8 @@ def _apply_column_patches() -> None:
 def init_db() -> None:
     # Import table models so SQLModel.metadata sees them before create_all.
     from app.models.adapter import AdapterTable  # noqa: F401
+    from app.models.dataset import DatasetTable  # noqa: F401
+    from app.models.finetune import FineTuneRunTable  # noqa: F401
     from app.models.run import RunTable  # noqa: F401
     from app.models.workflow import WorkflowTable  # noqa: F401
 

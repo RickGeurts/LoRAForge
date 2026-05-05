@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlmodel import Session, select
 
 from app.models.adapter import Adapter, AdapterTable, EvaluationMetrics
+from app.models.dataset import Dataset, DatasetTable
 from app.models.run import Run, RunTable
 from app.models.workflow import (
     NodePosition,
@@ -43,6 +44,32 @@ def _seed_adapters() -> list[Adapter]:
             status="draft",
             trainingDataSummary=None,
             evaluationMetrics=None,
+            createdAt=_SEED_TS,
+        ),
+    ]
+
+
+def _seed_datasets() -> list[Dataset]:
+    return [
+        Dataset(
+            id="ds_mrel_corpus",
+            name="MREL annotated prospectus corpus",
+            taskType="mrel_classifier",
+            sourceType="mock",
+            summary=(
+                "120 prospectus excerpts hand-labelled for MREL eligibility, "
+                "with subordination clause, ranking, and maturity annotations."
+            ),
+            rowCount=120,
+            createdAt=_SEED_TS,
+        ),
+        Dataset(
+            id="ds_clauses_v1",
+            name="Prospectus clause snippets",
+            taskType="clause_extractor",
+            sourceType="mock",
+            summary="450 short snippets tagged with clause type (subordination/ranking/maturity).",
+            rowCount=450,
             createdAt=_SEED_TS,
         ),
     ]
@@ -105,6 +132,9 @@ def seed_if_empty(session: Session) -> None:
     if session.exec(select(AdapterTable)).first() is None:
         for adapter in _seed_adapters():
             session.add(AdapterTable.from_api(adapter))
+    if session.exec(select(DatasetTable)).first() is None:
+        for dataset in _seed_datasets():
+            session.add(DatasetTable.from_api(dataset))
     if session.exec(select(WorkflowTable)).first() is None:
         for workflow in _seed_workflows():
             session.add(WorkflowTable.from_api(workflow))

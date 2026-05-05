@@ -7,6 +7,8 @@ import {
   FileStack,
   Workflow,
   Boxes,
+  Database,
+  GraduationCap,
   PlayCircle,
   Settings,
 } from "lucide-react";
@@ -16,6 +18,8 @@ const NAV = [
   { href: "/templates", label: "Templates", icon: FileStack },
   { href: "/workflows", label: "Workflows", icon: Workflow },
   { href: "/adapters", label: "Adapters", icon: Boxes },
+  { href: "/datasets", label: "Datasets", icon: Database },
+  { href: "/finetune", label: "Fine-tune", icon: GraduationCap },
   { href: "/runs", label: "Runs", icon: PlayCircle },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;

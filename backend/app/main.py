@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
 from app.db import engine, init_db
-from app.routers import adapters, ollama, runs, workflows
+from app.routers import adapters, datasets, finetune, ollama, runs, workflows
 from app.services.seed import seed_if_empty
 
 
@@ -33,8 +33,10 @@ app.add_middleware(
 )
 
 app.include_router(adapters.router)
+app.include_router(datasets.router)
 app.include_router(workflows.router)
 app.include_router(runs.router)
+app.include_router(finetune.router)
 app.include_router(ollama.router)
 
 

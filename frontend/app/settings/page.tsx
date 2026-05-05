@@ -31,38 +31,72 @@ export default async function SettingsPage() {
             </p>
           ) : (
             <>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                Base URL:{" "}
-                <span className="font-mono text-zinc-900 dark:text-zinc-50">
+              <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+                <dt className="text-zinc-500">Base URL</dt>
+                <dd className="font-mono text-zinc-900 dark:text-zinc-50">
                   {status?.baseUrl}
-                </span>
-              </p>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                Status:{" "}
-                <span
+                </dd>
+                <dt className="text-zinc-500">Status</dt>
+                <dd
                   className={
                     status?.reachable
                       ? "text-green-600 dark:text-green-400"
                       : "text-zinc-500"
                   }
                 >
-                  {status?.reachable ? "reachable" : "unreachable (stubbed)"}
-                </span>
+                  {status?.reachable
+                    ? "reachable"
+                    : `unreachable${status?.error ? ` (${status.error})` : ""}`}
+                </dd>
+                {status?.reachable && status?.version ? (
+                  <>
+                    <dt className="text-zinc-500">Version</dt>
+                    <dd className="font-mono text-zinc-900 dark:text-zinc-50">
+                      {status.version}
+                    </dd>
+                  </>
+                ) : null}
+                {status?.reachable && typeof status?.modelCount === "number" ? (
+                  <>
+                    <dt className="text-zinc-500">Installed models</dt>
+                    <dd className="text-zinc-900 dark:text-zinc-50">
+                      {status.modelCount}
+                    </dd>
+                  </>
+                ) : null}
+              </dl>
+              <p className="mt-4 text-xs uppercase tracking-wide text-zinc-500">
+                Models {!status?.reachable ? "(stubbed)" : ""}
               </p>
-              <p className="mt-3 text-xs uppercase tracking-wide text-zinc-500">
-                Models
-              </p>
-              <ul className="mt-1 space-y-1">
-                {models.map((m) => (
-                  <li
-                    key={m.name}
-                    className="text-sm text-zinc-700 dark:text-zinc-300"
-                  >
-                    <span className="font-mono">{m.name}</span>{" "}
-                    <span className="text-zinc-500">· {m.size}</span>
-                  </li>
-                ))}
-              </ul>
+              {models.length === 0 ? (
+                <p className="mt-1 text-sm text-zinc-500">
+                  No models installed. Run{" "}
+                  <code className="font-mono">ollama pull llama3.1:8b</code> to
+                  add one.
+                </p>
+              ) : (
+                <ul className="mt-1 space-y-1">
+                  {models.map((m) => (
+                    <li
+                      key={m.name}
+                      className="text-sm text-zinc-700 dark:text-zinc-300"
+                    >
+                      <span className="font-mono">{m.name}</span>{" "}
+                      <span className="text-zinc-500">
+                        · {m.size} · {m.family}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!status?.reachable ? (
+                <p className="mt-4 text-xs text-zinc-500">
+                  Start Ollama locally (default{" "}
+                  <code className="font-mono">localhost:11434</code>) and reload
+                  this page to enable real inference. AI workflow nodes use a
+                  deterministic fallback while Ollama is unreachable.
+                </p>
+              ) : null}
             </>
           )}
         </div>

@@ -21,6 +21,11 @@ class TraceEntry(BaseModel):
     summary: str
     started_at: datetime = PydanticField(alias="startedAt")
     finished_at: datetime = PydanticField(alias="finishedAt")
+    # Populated when the step actually called Ollama. Optional so legacy
+    # mock-only entries (and non-AI nodes) round-trip cleanly.
+    model: str | None = None
+    total_tokens: int | None = PydanticField(default=None, alias="totalTokens")
+    latency_ms: int | None = PydanticField(default=None, alias="latencyMs")
 
     model_config = {"populate_by_name": True}
 

@@ -78,6 +78,9 @@ export type TraceEntry = {
   summary: string;
   startedAt: string;
   finishedAt: string;
+  model: string | null;
+  totalTokens: number | null;
+  latencyMs: number | null;
 };
 
 export type Run = {
@@ -108,6 +111,9 @@ export type RunCreate = {
 export type OllamaStatus = {
   reachable: boolean;
   baseUrl: string;
+  version?: string;
+  modelCount?: number;
+  error?: string;
   stub?: boolean;
 };
 

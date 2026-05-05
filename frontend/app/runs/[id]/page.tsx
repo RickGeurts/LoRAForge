@@ -174,7 +174,7 @@ export default async function RunDetailPage({
                         </span>
                       </p>
                       <span className="text-xs text-zinc-500 shrink-0 tabular-nums">
-                        {durationMs(entry)} ms
+                        {entry.latencyMs ?? durationMs(entry)} ms
                       </span>
                     </div>
                     <p className={`mt-0.5 text-sm ${TRACE_TONE[entry.status]}`}>
@@ -182,6 +182,17 @@ export default async function RunDetailPage({
                     </p>
                     <p className="mt-0.5 text-[11px] font-mono text-zinc-500">
                       {formatDateTime(entry.startedAt)}
+                      {entry.model ? (
+                        <>
+                          {" · "}
+                          <span className="text-zinc-600 dark:text-zinc-400">
+                            {entry.model}
+                          </span>
+                          {entry.totalTokens !== null
+                            ? ` · ${entry.totalTokens} tokens`
+                            : null}
+                        </>
+                      ) : null}
                     </p>
                   </div>
                 </li>

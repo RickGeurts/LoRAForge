@@ -84,7 +84,7 @@ def _seed_runs(workflows: list[Workflow]) -> list[Run]:
         return []
     inputs = {"document": "sample_prospectus.pdf"}
     final_status, output, trace, finished_at = execute_workflow(
-        template, inputs, started_at=_SEED_TS
+        template, inputs, started_at=_SEED_TS, use_ollama=False
     )
     return [
         Run(

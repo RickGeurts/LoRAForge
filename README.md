@@ -27,10 +27,10 @@ LoRAForge/
 .\.venv\Scripts\Activate.ps1
 pip install -r backend\requirements.txt
 cd backend
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 ```
 
-OpenAPI docs at http://localhost:8000/docs.
+OpenAPI docs at http://127.0.0.1:8001/docs. **Port 8001 (not 8000)** — port 8000 is reserved for LabelLex on this machine.
 
 ## Run the frontend
 
@@ -42,7 +42,7 @@ npm install      # first time only
 npm run dev
 ```
 
-App at http://localhost:3000. The dashboard, workflows, adapters, runs, and settings pages all hit the FastAPI backend; if the backend is down they degrade gracefully with an inline notice.
+App at http://localhost:3000. The dashboard, workflows, adapters, runs, and settings pages hit the FastAPI backend at `http://127.0.0.1:8001` (override with `NEXT_PUBLIC_API_BASE_URL`); if the backend is down they degrade gracefully with an inline notice.
 
 ## What's stubbed vs real (milestone 1)
 

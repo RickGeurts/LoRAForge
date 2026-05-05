@@ -15,10 +15,14 @@ pip install -r backend\requirements.txt
 
 ```powershell
 cd backend
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 ```
 
-Open http://localhost:8000/docs for the OpenAPI UI.
+Open http://127.0.0.1:8001/docs for the OpenAPI UI.
+
+> **Port 8001, not 8000** — port 8000 is reserved on this machine for the
+> LabelLex project. Using `127.0.0.1` (not `localhost`) avoids Windows
+> IPv6/IPv4 resolution issues with Node 18+.
 
 ## Endpoints (stubbed)
 

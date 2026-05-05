@@ -175,6 +175,10 @@ User can:
 - Domain naming
 - Simple architecture
 
+## Claude Code Operational Rules
+- For any package install (`pip install`, `npm install`, `uv pip install`, etc.) and other long-running commands (builds, training runs, dev servers), always run via the Bash tool with `run_in_background: true`, or set `timeout: 600000` (10 min). The default 2-minute Bash timeout regularly kills slow installs mid-stream and leaves the workspace in an ambiguous state.
+- After a backgrounded install, verify with a fast follow-up (`pip show <pkg>` / `npm ls <pkg>`) before assuming it succeeded.
+
 ## Final Instruction
 Build MVP with:
 - Visual workflow builder

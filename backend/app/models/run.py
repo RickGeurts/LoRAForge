@@ -7,6 +7,22 @@ from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
 RunStatus = Literal["queued", "running", "completed", "failed", "needs_review"]
+TraceStatus = Literal["ok", "warn", "error"]
+
+
+class TraceEntry(BaseModel):
+    """One node execution recorded for audit. Order in the list = execution order."""
+
+    node_id: str = PydanticField(alias="nodeId")
+    node_type: str = PydanticField(alias="nodeType")
+    label: str
+    group: str
+    status: TraceStatus
+    summary: str
+    started_at: datetime = PydanticField(alias="startedAt")
+    finished_at: datetime = PydanticField(alias="finishedAt")
+
+    model_config = {"populate_by_name": True}
 
 
 class RunOutput(BaseModel):
@@ -28,6 +44,7 @@ class Run(BaseModel):
     status: RunStatus
     inputs: dict[str, Any] = PydanticField(default_factory=dict)
     output: RunOutput | None = None
+    trace: list[TraceEntry] = PydanticField(default_factory=list)
     started_at: datetime = PydanticField(alias="startedAt")
     finished_at: datetime | None = PydanticField(default=None, alias="finishedAt")
 
@@ -52,11 +69,13 @@ class RunTable(SQLModel, table=True):
     status: str
     inputs: dict = Field(default_factory=dict, sa_column=Column(JSON))
     output: dict | None = Field(default=None, sa_column=Column(JSON))
+    trace: list = Field(default_factory=list, sa_column=Column(JSON))
     started_at: datetime
     finished_at: datetime | None = None
 
     def to_api(self) -> Run:
         output = RunOutput(**self.output) if self.output is not None else None
+        trace = [TraceEntry(**entry) for entry in (self.trace or [])]
         return Run(
             id=self.id,
             workflowId=self.workflow_id,
@@ -64,20 +83,23 @@ class RunTable(SQLModel, table=True):
             status=self.status,  # type: ignore[arg-type]
             inputs=self.inputs,
             output=output,
+            trace=trace,
             startedAt=self.started_at,
             finishedAt=self.finished_at,
         )
 
     @classmethod
     def from_api(cls, run: Run) -> "RunTable":
-        # mode="json" converts nested datetimes (RunOutput.timestamp) to ISO
-        # strings so SQLAlchemy's JSON column can serialize them. Pydantic
-        # parses the strings back to datetime when to_api() reconstructs.
+        # mode="json" converts nested datetimes to ISO strings so the JSON
+        # column can serialize them. Pydantic re-parses on to_api().
         output_dict = (
             run.output.model_dump(by_alias=False, mode="json")
             if run.output is not None
             else None
         )
+        trace_list = [
+            entry.model_dump(by_alias=False, mode="json") for entry in run.trace
+        ]
         return cls(
             id=run.id,
             workflow_id=run.workflow_id,
@@ -85,6 +107,7 @@ class RunTable(SQLModel, table=True):
             status=run.status,
             inputs=run.inputs,
             output=output_dict,
+            trace=trace_list,
             started_at=run.started_at,
             finished_at=run.finished_at,
         )

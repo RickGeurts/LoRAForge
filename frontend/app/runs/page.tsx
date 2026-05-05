@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
@@ -25,9 +27,10 @@ export default async function RunsPage() {
           <p className="text-sm text-zinc-500">No runs yet.</p>
         ) : (
           runs.map((r) => (
-            <div
+            <Link
               key={r.id}
-              className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-5 bg-white dark:bg-zinc-950"
+              href={`/runs/${r.id}`}
+              className="block rounded-lg border border-zinc-200 dark:border-zinc-800 p-5 bg-white dark:bg-zinc-950 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors"
             >
               <div className="flex items-baseline justify-between gap-3">
                 <span className="font-mono text-xs text-zinc-500">{r.id}</span>
@@ -45,13 +48,13 @@ export default async function RunsPage() {
                     {r.output.explanation}
                   </p>
                   <p className="mt-2 text-xs text-zinc-500">
-                    Sources: {r.output.sources.join(", ") || "—"}
+                    {r.trace.length} step{r.trace.length === 1 ? "" : "s"} · Open run →
                   </p>
                 </>
               ) : (
                 <p className="mt-2 text-sm text-zinc-500">No output yet.</p>
               )}
-            </div>
+            </Link>
           ))
         )}
       </section>

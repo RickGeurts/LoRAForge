@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlmodel import Session, select
 
 from app.models.adapter import Adapter, AdapterTable, EvaluationMetrics
-from app.models.run import Run, RunOutput, RunTable
+from app.models.run import Run, RunTable
 from app.models.workflow import (
     NodePosition,
     Workflow,
@@ -16,6 +16,7 @@ from app.models.workflow import (
     WorkflowNode,
     WorkflowTable,
 )
+from app.services.executor import execute_workflow
 
 _SEED_TS = datetime(2026, 5, 5, tzinfo=timezone.utc)
 
@@ -77,25 +78,25 @@ def _seed_workflows() -> list[Workflow]:
     ]
 
 
-def _seed_runs() -> list[Run]:
+def _seed_runs(workflows: list[Workflow]) -> list[Run]:
+    template = next((w for w in workflows if w.id == "wf_mrel_template"), None)
+    if template is None:
+        return []
+    inputs = {"document": "sample_prospectus.pdf"}
+    final_status, output, trace, finished_at = execute_workflow(
+        template, inputs, started_at=_SEED_TS
+    )
     return [
         Run(
             id="run_001",
-            workflowId="wf_mrel_template",
-            workflowVersion="0.1.0",
-            status="completed",
-            inputs={"document": "sample_prospectus.pdf"},
-            output=RunOutput(
-                decision="MREL-eligible",
-                confidence=0.87,
-                explanation="Subordination clause detected; maturity > 1 year.",
-                sources=["page 12 §4.2", "page 18 §6.1"],
-                adapterVersion="0.1.0",
-                workflowVersion="0.1.0",
-                timestamp=_SEED_TS,
-            ),
+            workflowId=template.id,
+            workflowVersion=template.version,
+            status=final_status,  # type: ignore[arg-type]
+            inputs=inputs,
+            output=output,
+            trace=trace,
             startedAt=_SEED_TS,
-            finishedAt=_SEED_TS,
+            finishedAt=finished_at,
         ),
     ]
 
@@ -108,6 +109,7 @@ def seed_if_empty(session: Session) -> None:
         for workflow in _seed_workflows():
             session.add(WorkflowTable.from_api(workflow))
     if session.exec(select(RunTable)).first() is None:
-        for run in _seed_runs():
+        workflows = _seed_workflows()
+        for run in _seed_runs(workflows):
             session.add(RunTable.from_api(run))
     session.commit()

@@ -3,6 +3,7 @@
 import "@xyflow/react/dist/style.css";
 
 import { useCallback, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Background,
   Controls,
@@ -218,8 +219,10 @@ function EditorInner({ workflow }: { workflow: ApiWorkflow }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const { screenToFlowPosition } = useReactFlow();
+  const router = useRouter();
 
   const nodeTypes = useMemo(() => NODE_TYPES, []);
   const edgeTypes = useMemo(() => EDGE_TYPES, []);
@@ -285,6 +288,32 @@ function EditorInner({ workflow }: { workflow: ApiWorkflow }) {
     }
   }, [workflow, nodes, edges]);
 
+  const onRun = useCallback(async () => {
+    const err = validate(nodes, edges);
+    if (err) {
+      setMessage({ tone: "err", text: err });
+      return;
+    }
+    setRunning(true);
+    setMessage(null);
+    try {
+      // Save first so the run executes against the canvas state, not stale DB.
+      const updated = flowToWorkflow(workflow, nodes, edges);
+      await api.replaceWorkflow(workflow.id, updated);
+      const run = await api.createRun({
+        workflowId: workflow.id,
+        inputs: { document: "sample_prospectus.pdf" },
+      });
+      router.push(`/runs/${run.id}`);
+    } catch (e) {
+      setMessage({
+        tone: "err",
+        text: e instanceof Error ? e.message : "Run failed.",
+      });
+      setRunning(false);
+    }
+  }, [workflow, nodes, edges, router]);
+
   return (
     <div className="flex h-[calc(100vh-12rem)] min-h-[480px] border-t border-zinc-200 dark:border-zinc-800">
       <aside className="w-56 shrink-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 overflow-y-auto">
@@ -332,10 +361,18 @@ function EditorInner({ workflow }: { workflow: ApiWorkflow }) {
           <button
             type="button"
             onClick={onSave}
-            disabled={saving}
-            className="text-sm px-3 py-1.5 rounded-md bg-zinc-900 text-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 hover:opacity-90 disabled:opacity-50"
+            disabled={saving || running}
+            className="text-sm px-3 py-1.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={onRun}
+            disabled={saving || running}
+            className="text-sm px-3 py-1.5 rounded-md bg-zinc-900 text-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 hover:opacity-90 disabled:opacity-50"
+          >
+            {running ? "Running…" : "Run"}
           </button>
         </div>
         <ReactFlow

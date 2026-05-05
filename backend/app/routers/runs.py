@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from app.db import get_session
 from app.models.run import Run, RunCreate, RunTable
 from app.models.workflow import WorkflowTable
+from app.services.executor import execute_workflow
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -34,21 +35,29 @@ def get_run(run_id: str, session: Session = Depends(get_session)) -> Run:
 def create_run(
     payload: RunCreate, session: Session = Depends(get_session)
 ) -> Run:
-    workflow = session.get(WorkflowTable, payload.workflow_id)
-    if workflow is None:
+    workflow_row = session.get(WorkflowTable, payload.workflow_id)
+    if workflow_row is None:
         raise HTTPException(
             status_code=404,
             detail=f"Workflow {payload.workflow_id} not found",
         )
+
+    started_at = datetime.now(timezone.utc)
+    workflow = workflow_row.to_api()
+    final_status, output, trace, finished_at = execute_workflow(
+        workflow, payload.inputs, started_at=started_at
+    )
+
     run = Run(
         id=f"run_{uuid.uuid4().hex[:12]}",
         workflowId=payload.workflow_id,
         workflowVersion=workflow.version,
-        status="queued",
+        status=final_status,
         inputs=payload.inputs,
-        output=None,
-        startedAt=datetime.now(timezone.utc),
-        finishedAt=None,
+        output=output,
+        trace=trace,
+        startedAt=started_at,
+        finishedAt=finished_at,
     )
     row = RunTable.from_api(run)
     session.add(row)

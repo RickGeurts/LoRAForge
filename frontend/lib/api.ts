@@ -60,11 +60,31 @@ export type Workflow = {
   updatedAt: string;
 };
 
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "needs_review";
+
+export type TraceStatus = "ok" | "warn" | "error";
+
+export type TraceEntry = {
+  nodeId: string;
+  nodeType: string;
+  label: string;
+  group: string;
+  status: TraceStatus;
+  summary: string;
+  startedAt: string;
+  finishedAt: string;
+};
+
 export type Run = {
   id: string;
   workflowId: string;
   workflowVersion: string;
-  status: string;
+  status: RunStatus;
   inputs: Record<string, unknown>;
   output: {
     decision: string;
@@ -75,6 +95,7 @@ export type Run = {
     workflowVersion: string;
     timestamp: string;
   } | null;
+  trace: TraceEntry[];
   startedAt: string;
   finishedAt: string | null;
 };

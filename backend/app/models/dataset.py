@@ -1,8 +1,9 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
 from app.models.adapter import TaskType
@@ -17,6 +18,7 @@ class Dataset(BaseModel):
     source_type: DatasetSource = PydanticField(alias="sourceType")
     summary: str
     row_count: int = PydanticField(alias="rowCount")
+    rows: list[dict[str, Any]] = PydanticField(default_factory=list)
     created_at: datetime = PydanticField(alias="createdAt")
 
     model_config = {"populate_by_name": True}
@@ -31,6 +33,7 @@ class DatasetTable(SQLModel, table=True):
     source_type: str
     summary: str
     row_count: int
+    rows: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime
 
     def to_api(self) -> Dataset:
@@ -41,6 +44,7 @@ class DatasetTable(SQLModel, table=True):
             sourceType=self.source_type,  # type: ignore[arg-type]
             summary=self.summary,
             rowCount=self.row_count,
+            rows=list(self.rows or []),
             createdAt=self.created_at,
         )
 
@@ -53,5 +57,6 @@ class DatasetTable(SQLModel, table=True):
             source_type=dataset.source_type,
             summary=dataset.summary,
             row_count=dataset.row_count,
+            rows=list(dataset.rows or []),
             created_at=dataset.created_at,
         )

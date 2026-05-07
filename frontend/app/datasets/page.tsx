@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { PageHeader } from "@/components/page-header";
 import { DatasetForm } from "@/components/dataset-form";
 import { api } from "@/lib/api";
@@ -47,10 +49,15 @@ export default async function DatasetsPage() {
                 datasets.map((d) => (
                   <tr
                     key={d.id}
-                    className="border-t border-zinc-200 dark:border-zinc-800 align-top"
+                    className="border-t border-zinc-200 dark:border-zinc-800 align-top hover:bg-zinc-50 dark:hover:bg-zinc-900"
                   >
                     <td className="px-4 py-3">
-                      <p className="text-zinc-900 dark:text-zinc-50">{d.name}</p>
+                      <Link
+                        href={`/datasets/${d.id}`}
+                        className="block text-zinc-900 dark:text-zinc-50 hover:underline"
+                      >
+                        {d.name}
+                      </Link>
                       <p className="text-xs text-zinc-500 mt-0.5">{d.summary}</p>
                     </td>
                     <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400 font-mono text-xs">

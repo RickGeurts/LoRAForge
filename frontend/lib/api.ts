@@ -120,6 +120,7 @@ export type Dataset = {
   sourceType: DatasetSource;
   summary: string;
   rowCount: number;
+  rows: Array<Record<string, unknown>>;
   createdAt: string;
 };
 

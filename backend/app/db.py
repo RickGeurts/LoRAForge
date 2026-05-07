@@ -19,6 +19,7 @@ engine = create_engine(
 # with Alembic.
 _COLUMN_PATCHES: dict[str, dict[str, str]] = {
     "run": {"trace": "JSON DEFAULT '[]'"},
+    "dataset": {"rows": "JSON DEFAULT '[]'"},
 }
 
 

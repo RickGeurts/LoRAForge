@@ -1,7 +1,9 @@
 """First-boot seed data so the dashboard isn't empty on a fresh DB.
 
-Idempotent: each block only inserts if its table is empty, so this is safe
-to run on every startup.
+Most blocks are idempotent: they insert into a table only when that table
+is empty. The dataset block is also idempotent in the other direction —
+it deletes superseded mock datasets by id so the registry shows just one
+hand-crafted MREL clause example after upgrade.
 """
 from datetime import datetime, timezone
 
@@ -15,6 +17,8 @@ from app.services.executor import execute_workflow
 from app.services.templates import mrel_eligibility
 
 _SEED_TS = datetime(2026, 5, 5, tzinfo=timezone.utc)
+_SUPERSEDED_DATASET_IDS = ("ds_mrel_corpus", "ds_clauses_v1")
+_MREL_CLAUSE_DATASET_ID = "ds_mrel_clauses"
 
 
 def _seed_adapters() -> list[Adapter]:
@@ -26,7 +30,7 @@ def _seed_adapters() -> list[Adapter]:
             taskType="mrel_classifier",
             version="0.1.0",
             status="draft",
-            trainingDataSummary="120 annotated MREL prospectus excerpts (mock)",
+            trainingDataSummary="10 hand-labelled MREL clause excerpts (mock)",
             evaluationMetrics=EvaluationMetrics(accuracy=0.0, notes="not yet trained"),
             createdAt=_SEED_TS,
         ),
@@ -44,30 +48,191 @@ def _seed_adapters() -> list[Adapter]:
     ]
 
 
-def _seed_datasets() -> list[Dataset]:
-    return [
-        Dataset(
-            id="ds_mrel_corpus",
-            name="MREL annotated prospectus corpus",
-            taskType="mrel_classifier",
-            sourceType="mock",
-            summary=(
-                "120 prospectus excerpts hand-labelled for MREL eligibility, "
-                "with subordination clause, ranking, and maturity annotations."
-            ),
-            rowCount=120,
-            createdAt=_SEED_TS,
+_MREL_CLAUSE_ROWS: list[dict] = [
+    {
+        "rowId": "r01",
+        "instrument": "Subordinated Tier 2 notes",
+        "clauseRef": "§4.2 Subordination",
+        "excerpt": (
+            "The Notes constitute direct, unsecured and subordinated obligations of "
+            "the Issuer ranking pari passu among themselves and behind the claims of "
+            "all senior creditors."
         ),
-        Dataset(
-            id="ds_clauses_v1",
-            name="Prospectus clause snippets",
-            taskType="clause_extractor",
-            sourceType="mock",
-            summary="450 short snippets tagged with clause type (subordination/ranking/maturity).",
-            rowCount=450,
-            createdAt=_SEED_TS,
+        "subordination": "subordinated",
+        "maturityYears": 10.0,
+        "secured": False,
+        "governingLaw": "English law",
+        "label": "eligible",
+        "rationale": "Subordinated, no call risk, maturity well above the 1-year threshold.",
+    },
+    {
+        "rowId": "r02",
+        "instrument": "Senior preferred notes",
+        "clauseRef": "§3.1 Status",
+        "excerpt": (
+            "The Notes constitute direct, unsecured and unsubordinated obligations of "
+            "the Issuer ranking pari passu with all other unsecured and unsubordinated "
+            "obligations."
         ),
-    ]
+        "subordination": "senior_preferred",
+        "maturityYears": 5.0,
+        "secured": False,
+        "governingLaw": "English law",
+        "label": "not_eligible",
+        "rationale": (
+            "Senior preferred ranks above SNP and subordinated debt — fails the "
+            "subordination requirement."
+        ),
+    },
+    {
+        "rowId": "r03",
+        "instrument": "Senior non-preferred notes",
+        "clauseRef": "§3.2 Subordination on insolvency",
+        "excerpt": (
+            "Upon insolvency of the Issuer, the Notes shall rank junior to senior "
+            "preferred liabilities and senior to subordinated obligations."
+        ),
+        "subordination": "senior_non_preferred",
+        "maturityYears": 6.0,
+        "secured": False,
+        "governingLaw": "French law",
+        "label": "eligible",
+        "rationale": (
+            "SNP sits between senior preferred and subordinated; satisfies "
+            "subordination, maturity > 1y."
+        ),
+    },
+    {
+        "rowId": "r04",
+        "instrument": "Additional Tier 1 capital",
+        "clauseRef": "§5 Loss absorption",
+        "excerpt": (
+            "The Notes are perpetual and contain a contractual write-down feature "
+            "triggered upon the Issuer's CET1 ratio falling below 5.125%."
+        ),
+        "subordination": "deeply_subordinated",
+        "maturityYears": 99.0,
+        "secured": False,
+        "governingLaw": "English law",
+        "label": "eligible",
+        "rationale": (
+            "AT1 is deeply subordinated and loss-absorbing — eligible regardless of "
+            "perpetual maturity."
+        ),
+    },
+    {
+        "rowId": "r05",
+        "instrument": "Covered bond",
+        "clauseRef": "§7 Cover pool",
+        "excerpt": (
+            "The Notes are secured by a cover pool of mortgage receivables in "
+            "accordance with the German Pfandbrief Act."
+        ),
+        "subordination": "senior_preferred",
+        "maturityYears": 7.0,
+        "secured": True,
+        "governingLaw": "German law",
+        "label": "not_eligible",
+        "rationale": "Secured liabilities are excluded from MREL eligibility.",
+    },
+    {
+        "rowId": "r06",
+        "instrument": "Subordinated note (short-dated)",
+        "clauseRef": "§4.1 Maturity",
+        "excerpt": (
+            "The Notes mature on 30 November 2026 and rank junior to all senior "
+            "creditors."
+        ),
+        "subordination": "subordinated",
+        "maturityYears": 0.5,
+        "secured": False,
+        "governingLaw": "English law",
+        "label": "not_eligible",
+        "rationale": "Remaining maturity below 1 year — fails the residual maturity test.",
+    },
+    {
+        "rowId": "r07",
+        "instrument": "Subordinated note with issuer call",
+        "clauseRef": "§4.3 Optional redemption",
+        "excerpt": (
+            "The Issuer may at its option redeem the Notes in whole at par on the "
+            "First Call Date, falling six months after the Issue Date."
+        ),
+        "subordination": "subordinated",
+        "maturityYears": 0.5,
+        "secured": False,
+        "governingLaw": "English law",
+        "label": "not_eligible",
+        "rationale": (
+            "Effective maturity to first call is below 1 year — strong economic "
+            "incentive to redeem early."
+        ),
+    },
+    {
+        "rowId": "r08",
+        "instrument": "Subordinated Tier 2 with regulatory call",
+        "clauseRef": "§4.4 Regulatory call",
+        "excerpt": (
+            "The Issuer may redeem the Notes in whole following a Regulatory Event "
+            "after the Reset Date, being five years after issuance."
+        ),
+        "subordination": "subordinated",
+        "maturityYears": 5.0,
+        "secured": False,
+        "governingLaw": "English law",
+        "label": "eligible",
+        "rationale": "Effective maturity to first call is at least 5 years.",
+    },
+    {
+        "rowId": "r09",
+        "instrument": "Senior preferred (short)",
+        "clauseRef": "§3.1",
+        "excerpt": (
+            "Senior unsecured obligations of the Issuer ranking pari passu with all "
+            "other senior unsecured liabilities."
+        ),
+        "subordination": "senior_preferred",
+        "maturityYears": 3.0,
+        "secured": False,
+        "governingLaw": "Dutch law",
+        "label": "not_eligible",
+        "rationale": "Senior preferred — does not meet the subordination requirement.",
+    },
+    {
+        "rowId": "r10",
+        "instrument": "Senior non-preferred (callable)",
+        "clauseRef": "§3.4 Issuer call",
+        "excerpt": (
+            "The Notes are callable at par after the Optional Redemption Date, "
+            "falling six months prior to the Maturity Date."
+        ),
+        "subordination": "senior_non_preferred",
+        "maturityYears": 0.5,
+        "secured": False,
+        "governingLaw": "French law",
+        "label": "not_eligible",
+        "rationale": (
+            "Subordination is fine, but effective maturity to first call is under 1 year."
+        ),
+    },
+]
+
+
+def _mrel_clause_dataset() -> Dataset:
+    return Dataset(
+        id=_MREL_CLAUSE_DATASET_ID,
+        name="MREL clause eligibility — labelled examples",
+        taskType="mrel_classifier",
+        sourceType="mock",
+        summary=(
+            "10 hand-crafted prospectus clause excerpts labelled MREL-eligible or "
+            "not, with rationale grounded in subordination, secured status, and "
+            "effective maturity to first call."
+        ),
+        rowCount=len(_MREL_CLAUSE_ROWS),
+        rows=_MREL_CLAUSE_ROWS,
+        createdAt=_SEED_TS,
+    )
 
 
 def _seed_workflows() -> list[Workflow]:
@@ -97,13 +262,22 @@ def _seed_runs(workflows: list[Workflow]) -> list[Run]:
     ]
 
 
+def _reconcile_datasets(session: Session) -> None:
+    # Drop superseded mock datasets if they're still hanging around from an
+    # earlier seed. Insert the canonical MREL clause dataset if missing.
+    for old_id in _SUPERSEDED_DATASET_IDS:
+        old = session.get(DatasetTable, old_id)
+        if old is not None:
+            session.delete(old)
+    if session.get(DatasetTable, _MREL_CLAUSE_DATASET_ID) is None:
+        session.add(DatasetTable.from_api(_mrel_clause_dataset()))
+
+
 def seed_if_empty(session: Session) -> None:
     if session.exec(select(AdapterTable)).first() is None:
         for adapter in _seed_adapters():
             session.add(AdapterTable.from_api(adapter))
-    if session.exec(select(DatasetTable)).first() is None:
-        for dataset in _seed_datasets():
-            session.add(DatasetTable.from_api(dataset))
+    _reconcile_datasets(session)
     if session.exec(select(WorkflowTable)).first() is None:
         for workflow in _seed_workflows():
             session.add(WorkflowTable.from_api(workflow))

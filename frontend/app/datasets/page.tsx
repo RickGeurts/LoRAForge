@@ -6,9 +6,10 @@ import { api } from "@/lib/api";
 
 export default async function DatasetsPage() {
   let datasets: Awaited<ReturnType<typeof api.datasets>> = [];
+  let tasks: Awaited<ReturnType<typeof api.tasks>> = [];
   let error: string | null = null;
   try {
-    datasets = await api.datasets();
+    [datasets, tasks] = await Promise.all([api.datasets(), api.tasks()]);
   } catch (e) {
     error = e instanceof Error ? e.message : "Unknown error";
   }
@@ -26,7 +27,7 @@ export default async function DatasetsPage() {
           </div>
         ) : null}
 
-        <DatasetForm />
+        <DatasetForm tasks={tasks} />
 
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
           <table className="w-full text-sm">

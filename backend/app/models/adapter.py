@@ -7,13 +7,11 @@ from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
 AdapterStatus = Literal["draft", "trained", "validated", "published", "deprecated"]
-TaskType = Literal[
-    "mrel_classifier",
-    "instrument_classifier",
-    "clause_extractor",
-    "validator",
-    "other",
-]
+# TaskType used to be a Literal of the five seeded ids. Now that the Task
+# registry can be extended by users, any string that resolves to a Task.id is
+# valid; the API trusts the UI to pick from /tasks. Step 5 of the plan will
+# add a runtime check in the executor.
+TaskType = str
 
 
 class EvaluationMetrics(BaseModel):

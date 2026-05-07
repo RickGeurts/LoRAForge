@@ -1,17 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { api, type DatasetSource } from "@/lib/api";
-
-const TASK_TYPES = [
-  { value: "mrel_classifier", label: "MREL classifier" },
-  { value: "instrument_classifier", label: "Instrument classifier" },
-  { value: "clause_extractor", label: "Clause extractor" },
-  { value: "validator", label: "Validator" },
-  { value: "other", label: "Other" },
-] as const;
+import { api, type DatasetSource, type Task } from "@/lib/api";
 
 const SOURCE_TYPES: Array<{ value: DatasetSource; label: string }> = [
   { value: "mock", label: "Mock / synthetic" },
@@ -20,12 +13,10 @@ const SOURCE_TYPES: Array<{ value: DatasetSource; label: string }> = [
   { value: "external", label: "External system" },
 ];
 
-export function DatasetForm() {
+export function DatasetForm({ tasks }: { tasks: Task[] }) {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [taskType, setTaskType] = useState<typeof TASK_TYPES[number]["value"]>(
-    "mrel_classifier",
-  );
+  const [taskType, setTaskType] = useState<string>(tasks[0]?.id ?? "");
   const [sourceType, setSourceType] = useState<DatasetSource>("mock");
   const [summary, setSummary] = useState("");
   const [rowCount, setRowCount] = useState<number>(0);
@@ -34,6 +25,10 @@ export function DatasetForm() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!taskType) {
+      setError("Pick a task first.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -55,6 +50,18 @@ export function DatasetForm() {
     }
   };
 
+  if (tasks.length === 0) {
+    return (
+      <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900 p-4 text-sm text-amber-900 dark:text-amber-200">
+        No tasks defined yet. Define one on the{" "}
+        <Link href="/tasks" className="underline">
+          Tasks
+        </Link>{" "}
+        page before creating a dataset.
+      </div>
+    );
+  }
+
   return (
     <form
       onSubmit={onSubmit}
@@ -75,18 +82,24 @@ export function DatasetForm() {
           />
         </label>
         <label className="text-xs uppercase tracking-wide text-zinc-500">
-          Task type
+          Task
           <select
             value={taskType}
-            onChange={(e) => setTaskType(e.target.value as typeof taskType)}
+            onChange={(e) => setTaskType(e.target.value)}
             className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm"
           >
-            {TASK_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
+            {tasks.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
               </option>
             ))}
           </select>
+          <Link
+            href="/tasks"
+            className="block mt-1 text-[11px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-50 normal-case tracking-normal"
+          >
+            None match? → Define a new task
+          </Link>
         </label>
         <label className="text-xs uppercase tracking-wide text-zinc-500">
           Source

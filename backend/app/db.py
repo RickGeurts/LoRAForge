@@ -45,6 +45,7 @@ def init_db() -> None:
     from app.models.dataset import DatasetTable  # noqa: F401
     from app.models.finetune import FineTuneRunTable  # noqa: F401
     from app.models.run import RunTable  # noqa: F401
+    from app.models.task import TaskTable  # noqa: F401
     from app.models.workflow import WorkflowTable  # noqa: F401
 
     SQLModel.metadata.create_all(engine)

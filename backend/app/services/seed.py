@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from app.models.adapter import Adapter, AdapterTable, EvaluationMetrics
 from app.models.dataset import Dataset, DatasetTable
 from app.models.run import Run, RunTable
+from app.models.task import Task, TaskTable
 from app.models.workflow import Workflow, WorkflowTable
 from app.services.executor import execute_workflow
 from app.services.templates import mrel_eligibility
@@ -19,6 +20,101 @@ from app.services.templates import mrel_eligibility
 _SEED_TS = datetime(2026, 5, 5, tzinfo=timezone.utc)
 _SUPERSEDED_DATASET_IDS = ("ds_mrel_corpus", "ds_clauses_v1")
 _MREL_CLAUSE_DATASET_ID = "ds_mrel_clauses"
+
+
+def _seed_tasks() -> list[Task]:
+    return [
+        Task(
+            id="mrel_classifier",
+            name="MREL Eligibility Classifier",
+            description=(
+                "Decide whether a financial instrument is MREL-eligible based on "
+                "subordination, secured status, and effective maturity to first call."
+            ),
+            promptTemplate=(
+                "Briefly assess MREL eligibility for the prospectus '{document}', "
+                "given subordination and maturity > 1y are typical eligibility criteria."
+            ),
+            expectedOutput=(
+                "A short eligibility verdict (eligible / not eligible) plus 1-2 "
+                "sentences of rationale citing subordination and maturity."
+            ),
+            nodeGroup="ai",
+            defaultBaseModel="llama3.1:8b",
+            builtin=True,
+            createdAt=_SEED_TS,
+            updatedAt=_SEED_TS,
+        ),
+        Task(
+            id="instrument_classifier",
+            name="Instrument Classifier",
+            description=(
+                "Classify a financial instrument by type (Tier 2, AT1, senior "
+                "preferred, covered bond, …)."
+            ),
+            promptTemplate=(
+                "Briefly classify the financial instrument described in prospectus "
+                "'{document}' (e.g. Tier 2 capital, senior unsecured, covered bond)."
+            ),
+            expectedOutput="Instrument type label and 1-sentence rationale.",
+            nodeGroup="ai",
+            defaultBaseModel="llama3.1:8b",
+            builtin=True,
+            createdAt=_SEED_TS,
+            updatedAt=_SEED_TS,
+        ),
+        Task(
+            id="clause_extractor",
+            name="Prospectus Clause Extractor",
+            description=(
+                "Extract clauses relevant to MREL eligibility (subordination, "
+                "ranking, maturity, governing law) from a prospectus."
+            ),
+            promptTemplate=(
+                "List the most likely clauses to extract from prospectus '{document}' "
+                "that affect MREL eligibility (subordination, ranking, maturity)."
+            ),
+            expectedOutput=(
+                "Bulleted list of clause references with a one-line excerpt each."
+            ),
+            nodeGroup="ai",
+            defaultBaseModel="llama3.1:8b",
+            builtin=True,
+            createdAt=_SEED_TS,
+            updatedAt=_SEED_TS,
+        ),
+        Task(
+            id="validator",
+            name="Validator",
+            description=(
+                "Apply deterministic regulatory rules to a prior node's output. "
+                "Not an AI task — this Task entry exists so adapters/datasets can "
+                "still reference 'validator' as their type."
+            ),
+            promptTemplate="",
+            expectedOutput="Pass/fail per rule, with a list of failed rule ids.",
+            nodeGroup="rules",
+            defaultBaseModel="llama3.1:8b",
+            builtin=True,
+            createdAt=_SEED_TS,
+            updatedAt=_SEED_TS,
+        ),
+        Task(
+            id="other",
+            name="Other",
+            description=(
+                "Catch-all for adapters or datasets whose task doesn't fit one of "
+                "the named categories."
+            ),
+            promptTemplate="",
+            expectedOutput="",
+            nodeGroup="ai",
+            defaultBaseModel="llama3.1:8b",
+            builtin=True,
+            createdAt=_SEED_TS,
+            updatedAt=_SEED_TS,
+        ),
+    ]
 
 
 def _seed_adapters() -> list[Adapter]:
@@ -273,7 +369,17 @@ def _reconcile_datasets(session: Session) -> None:
         session.add(DatasetTable.from_api(_mrel_clause_dataset()))
 
 
+def _reconcile_tasks(session: Session) -> None:
+    # Insert any builtin task that's missing. Don't overwrite existing rows —
+    # users may have edited a builtin's description or prompt template, and
+    # we should respect that.
+    for task in _seed_tasks():
+        if session.get(TaskTable, task.id) is None:
+            session.add(TaskTable.from_api(task))
+
+
 def seed_if_empty(session: Session) -> None:
+    _reconcile_tasks(session)
     if session.exec(select(AdapterTable)).first() is None:
         for adapter in _seed_adapters():
             session.add(AdapterTable.from_api(adapter))

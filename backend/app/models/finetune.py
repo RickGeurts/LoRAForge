@@ -21,11 +21,21 @@ class FineTuneHyperparams(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class FineTuneStep(BaseModel):
+    epoch: int
+    accuracy: float
+    f1: float
+    eval_loss: float = PydanticField(alias="evalLoss")
+
+    model_config = {"populate_by_name": True}
+
+
 class FineTuneMetrics(BaseModel):
     accuracy: float | None = None
     f1: float | None = None
     eval_loss: float | None = PydanticField(default=None, alias="evalLoss")
     notes: str | None = None
+    history: list[FineTuneStep] = PydanticField(default_factory=list)
 
     model_config = {"populate_by_name": True}
 

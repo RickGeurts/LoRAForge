@@ -140,11 +140,19 @@ export type FineTuneHyperparams = {
   batchSize: number;
 };
 
+export type FineTuneStep = {
+  epoch: number;
+  accuracy: number;
+  f1: number;
+  evalLoss: number;
+};
+
 export type FineTuneMetrics = {
   accuracy: number | null;
   f1: number | null;
   evalLoss: number | null;
   notes: string | null;
+  history: FineTuneStep[];
 };
 
 export type FineTuneRun = {

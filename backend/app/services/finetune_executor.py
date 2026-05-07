@@ -6,16 +6,20 @@ Adapter row tagged status="trained". Real LoRA training is explicitly
 out of scope for the MVP (CLAUDE.md non-goal); this fills in the
 audit/governance surfaces with realistic-shaped data.
 
-Determinism: metrics are hashed off (dataset_id, base_model, adapter_name,
-hyperparams) so the same config always yields the same numbers — handy
-for review and regression-spotting.
+Determinism: metrics are hashed off (dataset content, dataset_id, base_model,
+adapter_name, hyperparams) so the same config always yields the same numbers
+— and editing the dataset's rows shifts the metrics, which is what reviewers
+actually want to see.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from app.models.adapter import Adapter, EvaluationMetrics
 from app.models.dataset import Dataset
@@ -23,10 +27,38 @@ from app.models.finetune import (
     FineTuneHyperparams,
     FineTuneMetrics,
     FineTuneRun,
+    FineTuneStep,
 )
 from app.models.run import TraceEntry
 
 _STAGE_BASE_MS = 60
+_VAL_SPLIT_RATIO = 0.1
+
+
+def _split_sizes(row_count: int) -> tuple[int, int]:
+    """Return (train_size, val_size) for a 90/10 split, val ≥ 1 when rows ≥ 1."""
+    if row_count <= 0:
+        return 0, 0
+    val = max(1, int(row_count * _VAL_SPLIT_RATIO))
+    return row_count - val, val
+
+
+def _label_distribution(rows: list[dict[str, Any]]) -> Counter[str] | None:
+    """Count rows by their `label` field. Returns None if no rows have a label."""
+    counts: Counter[str] = Counter()
+    for r in rows:
+        label = r.get("label")
+        if isinstance(label, str):
+            counts[label] += 1
+    return counts if counts else None
+
+
+def _dataset_fingerprint(dataset: Dataset) -> str:
+    """Stable hash over the dataset's row content for the metrics seed."""
+    if not dataset.rows:
+        return f"empty:{dataset.row_count}"
+    payload = json.dumps(dataset.rows, sort_keys=True, default=str).encode()
+    return hashlib.sha256(payload).hexdigest()[:16]
 
 
 @dataclass
@@ -42,13 +74,13 @@ _STAGES: list[_Stage] = [
         node_id="stage_dataset",
         node_type="dataset_load",
         label="Dataset",
-        summary_template="Loaded dataset '{dataset_name}' ({row_count} examples, {source_type}).",
+        summary_template="Loaded dataset '{dataset_name}' ({row_count} examples, {source_type}).{label_note}",
     ),
     _Stage(
         node_id="stage_preprocess",
         node_type="preprocess",
         label="Preprocess",
-        summary_template="Tokenised {row_count} examples; train/val split 90/10; max_seq_len 1024.",
+        summary_template="Tokenised {row_count} examples; train/val split {train_size}/{val_size}; max_seq_len 1024.",
     ),
     _Stage(
         node_id="stage_base_model",
@@ -66,22 +98,67 @@ _STAGES: list[_Stage] = [
         node_id="stage_evaluation",
         node_type="evaluation",
         label="Evaluation",
-        summary_template="Evaluated on validation split: accuracy={accuracy:.2f}, f1={f1:.2f}, eval_loss={eval_loss:.3f}.",
+        summary_template="Evaluated on {val_size} validation example(s): accuracy={accuracy:.2f}, f1={f1:.2f}, eval_loss={eval_loss:.3f}.",
     ),
 ]
 
 
-def _deterministic_metrics(seed: str) -> FineTuneMetrics:
+def _epoch_curve(
+    final: float, *, start: float, epochs: int, digest: bytes, offset: int
+) -> list[float]:
+    """Smooth exponential approach from start to final over `epochs` steps,
+    perturbed deterministically from `digest[offset:]`.
+    """
+    if epochs <= 0:
+        return []
+    out: list[float] = []
+    for i in range(epochs):
+        t = (i + 1) / epochs
+        # Exponential approach — typical of training curves.
+        base = start + (final - start) * (1 - 2.71828 ** (-3 * t))
+        # Small per-epoch wiggle so the curve doesn't look algebraic.
+        noise_byte = digest[(offset + i) % len(digest)]
+        noise = (noise_byte / 255 - 0.5) * 0.025
+        out.append(base + noise)
+    # Always pin the last point to the final headline value so the chart
+    # matches the metrics card.
+    if out:
+        out[-1] = final
+    return out
+
+
+def _deterministic_metrics(seed: str, epochs: int) -> FineTuneMetrics:
     digest = hashlib.sha256(seed.encode()).digest()
-    # Map first three bytes into plausible ranges.
+    # Map first three bytes into plausible final ranges.
     accuracy = 0.78 + (digest[0] / 255) * 0.18  # 0.78–0.96
     f1 = max(0.65, accuracy - 0.04 - (digest[1] / 255) * 0.05)
     eval_loss = 0.18 + (digest[2] / 255) * 0.32  # 0.18–0.50
+
+    accuracy_curve = _epoch_curve(
+        accuracy, start=0.5, epochs=epochs, digest=digest, offset=4
+    )
+    f1_curve = _epoch_curve(
+        f1, start=0.45, epochs=epochs, digest=digest, offset=12
+    )
+    loss_curve = _epoch_curve(
+        eval_loss, start=1.5, epochs=epochs, digest=digest, offset=20
+    )
+    history = [
+        FineTuneStep(
+            epoch=i + 1,
+            accuracy=round(max(0.0, min(1.0, accuracy_curve[i])), 3),
+            f1=round(max(0.0, min(1.0, f1_curve[i])), 3),
+            evalLoss=round(max(0.0, loss_curve[i]), 3),
+        )
+        for i in range(epochs)
+    ]
+
     return FineTuneMetrics(
         accuracy=round(accuracy, 3),
         f1=round(f1, 3),
         evalLoss=round(eval_loss, 3),
         notes="Mock run — no real training was performed.",
+        history=history,
     )
 
 
@@ -98,6 +175,7 @@ def execute_finetune(
     seed = "|".join(
         [
             dataset.id,
+            _dataset_fingerprint(dataset),
             base_model,
             adapter_name,
             str(hyperparams.epochs),
@@ -105,12 +183,23 @@ def execute_finetune(
             str(hyperparams.batch_size),
         ]
     )
-    metrics = _deterministic_metrics(seed)
+    metrics = _deterministic_metrics(seed, hyperparams.epochs)
+
+    train_size, val_size = _split_sizes(dataset.row_count)
+    label_dist = _label_distribution(dataset.rows)
+    label_note = (
+        " Labels: " + ", ".join(f"{n} {label}" for label, n in label_dist.most_common())
+        if label_dist
+        else ""
+    )
 
     context = {
         "dataset_name": dataset.name,
         "row_count": dataset.row_count,
         "source_type": dataset.source_type,
+        "label_note": label_note,
+        "train_size": train_size,
+        "val_size": val_size,
         "base_model": base_model,
         "epochs": hyperparams.epochs,
         "learning_rate": hyperparams.learning_rate,
@@ -148,6 +237,13 @@ def execute_finetune(
         status="trained",
         trainingDataSummary=(
             f"{dataset.row_count} examples from '{dataset.name}' ({dataset.source_type})."
+            + (
+                " Label distribution: "
+                + ", ".join(f"{n} {label}" for label, n in label_dist.most_common())
+                + "."
+                if label_dist
+                else ""
+            )
         ),
         evaluationMetrics=EvaluationMetrics(
             accuracy=metrics.accuracy,

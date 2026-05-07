@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { PageHeader } from "@/components/page-header";
+import { FineTuneMetricsChart } from "@/components/finetune-metrics-chart";
 import { FineTunePipeline } from "@/components/finetune-pipeline";
+import { PageHeader } from "@/components/page-header";
 import { api, type FineTuneStatus } from "@/lib/api";
 
 const STATUS_TONE: Record<FineTuneStatus, string> = {
@@ -147,6 +148,14 @@ export default async function FineTuneRunPage({
             </dl>
             {run.metrics.notes ? (
               <p className="mt-2 text-xs text-zinc-500">{run.metrics.notes}</p>
+            ) : null}
+            {run.metrics.history && run.metrics.history.length > 0 ? (
+              <div className="mt-5 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+                <h3 className="text-xs uppercase tracking-wide text-zinc-500 mb-2">
+                  Per-epoch evolution
+                </h3>
+                <FineTuneMetricsChart history={run.metrics.history} />
+              </div>
             ) : null}
           </div>
         ) : null}

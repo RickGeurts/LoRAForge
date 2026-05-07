@@ -29,17 +29,17 @@ import {
   api,
   type Adapter,
   type NodeGroup,
+  type Task,
   type Workflow as ApiWorkflow,
 } from "@/lib/api";
 
 type PaletteItem = { group: NodeGroup; type: string; label: string };
 
-const PALETTE: PaletteItem[] = [
+// Non-AI nodes are executor primitives, not user-defined tasks. They stay
+// hardcoded. AI palette entries come from the Task registry at runtime.
+const STATIC_PALETTE: PaletteItem[] = [
   { group: "documents", type: "prospectus_loader", label: "Prospectus Loader" },
   { group: "documents", type: "pdf_extractor", label: "PDF Extractor" },
-  { group: "ai", type: "clause_extractor", label: "Clause Extractor" },
-  { group: "ai", type: "mrel_classifier", label: "MREL Classifier" },
-  { group: "ai", type: "instrument_classifier", label: "Instrument Classifier" },
   { group: "rules", type: "validator", label: "Validator" },
   { group: "rules", type: "confidence_filter", label: "Confidence Filter" },
   { group: "logic", type: "router", label: "Router" },
@@ -47,6 +47,15 @@ const PALETTE: PaletteItem[] = [
   { group: "output", type: "decision_output", label: "Decision Output" },
   { group: "output", type: "report_generator", label: "Report Generator" },
 ];
+
+function buildPalette(aiTasks: Task[]): PaletteItem[] {
+  const aiItems: PaletteItem[] = aiTasks.map((t) => ({
+    group: "ai",
+    type: t.id,
+    label: t.name,
+  }));
+  return [...STATIC_PALETTE, ...aiItems];
+}
 
 const GROUP_ORDER: NodeGroup[] = ["documents", "ai", "rules", "logic", "output"];
 
@@ -236,13 +245,15 @@ function validate(nodes: FlowNode[], edges: Edge[]): string | null {
 export function WorkflowEditor({
   workflow,
   adapters,
+  aiTasks,
 }: {
   workflow: ApiWorkflow;
   adapters: Adapter[];
+  aiTasks: Task[];
 }) {
   return (
     <ReactFlowProvider>
-      <EditorInner workflow={workflow} adapters={adapters} />
+      <EditorInner workflow={workflow} adapters={adapters} aiTasks={aiTasks} />
     </ReactFlowProvider>
   );
 }
@@ -250,14 +261,17 @@ export function WorkflowEditor({
 function EditorInner({
   workflow,
   adapters,
+  aiTasks,
 }: {
   workflow: ApiWorkflow;
   adapters: Adapter[];
+  aiTasks: Task[];
 }) {
   const initial = useMemo(
     () => workflowToFlow(workflow, adapters),
     [workflow, adapters],
   );
+  const palette = useMemo(() => buildPalette(aiTasks), [aiTasks]);
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [saving, setSaving] = useState(false);
@@ -406,7 +420,7 @@ function EditorInner({
                 {GROUP_LABELS[group]}
               </p>
               <div className="space-y-1">
-                {PALETTE.filter((p) => p.group === group).map((item) => (
+                {palette.filter((p) => p.group === group).map((item) => (
                   <PaletteCard key={item.type} item={item} />
                 ))}
               </div>

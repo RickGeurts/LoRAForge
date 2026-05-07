@@ -14,10 +14,12 @@ export default async function WorkflowDetailPage({
   const { id } = await params;
   let workflow: Awaited<ReturnType<typeof api.workflow>>;
   let adapters: Awaited<ReturnType<typeof api.adapters>> = [];
+  let aiTasks: Awaited<ReturnType<typeof api.tasks>> = [];
   try {
-    [workflow, adapters] = await Promise.all([
+    [workflow, adapters, aiTasks] = await Promise.all([
       api.workflow(id),
       api.adapters().catch(() => []),
+      api.tasks("ai").catch(() => []),
     ]);
   } catch (e) {
     if (e instanceof Error && /404/.test(e.message)) notFound();
@@ -50,7 +52,11 @@ export default async function WorkflowDetailPage({
           />
         </div>
       </div>
-      <WorkflowEditor workflow={workflow} adapters={adapters} />
+      <WorkflowEditor
+        workflow={workflow}
+        adapters={adapters}
+        aiTasks={aiTasks}
+      />
     </div>
   );
 }

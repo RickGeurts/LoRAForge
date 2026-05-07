@@ -5,12 +5,19 @@ doesn't pay the cost (and the GPU memory) at boot. Training is synchronous:
 the POST /finetune request blocks until training finishes (a few minutes
 after the first model download).
 
-Phase 1 scope: produce real LoRA weights on disk and a real training-loss
-curve. Inference is still routed through Ollama against the un-tuned base —
-that's phase 2.
+Pipeline
+--------
+1. Materialise (prompt, completion) pairs from labelled dataset rows.
+2. Deterministic 90/10 train/val split.
+3. QLoRA training on the train split with HF Trainer.
+4. After each epoch, run greedy generation on the val split, parse the
+   predicted label, and record real accuracy + F1.
+5. Final adapter weights save to data/adapters/<adapter_id>/.
 """
 from __future__ import annotations
 
+import random
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -30,18 +37,103 @@ from app.models.task import Task
 ADAPTERS_ROOT = (
     Path(__file__).resolve().parent.parent.parent / "data" / "adapters"
 )
+_VAL_RATIO = 0.1
+_VAL_MAX_NEW_TOKENS = 24
+_SPLIT_SEED = 42
+
+_POSITIVE_LABEL = "eligible"
+_NEGATIVE_LABEL = "not_eligible"
 
 
 def is_supported_base(base_model: str) -> bool:
-    """Real training only handles HuggingFace-hostable model ids for now.
-
-    We use 'owner/name' as the cheap heuristic, plus an explicit allow-list
-    for the bases we've actually validated. Ollama tags like 'llama3.1:8b'
-    fall back to the mock executor.
-    """
     if "/" not in base_model:
         return False
     return base_model.lower().startswith("qwen/qwen2.5")
+
+
+def _split_pairs(
+    pairs: list[TrainingPair],
+) -> tuple[list[TrainingPair], list[TrainingPair]]:
+    """Deterministic 90/10 split by shuffling with a fixed seed.
+
+    Stratified would be nicer but for a 200-row balanced dataset, plain
+    shuffle yields close to 50/50 in val by chance. We sanity-check that
+    val isn't accidentally degenerate (e.g. all one class) — if it is, we
+    flip a few pairs from train into val so eval is meaningful.
+    """
+    rnd = random.Random(_SPLIT_SEED)
+    shuffled = list(pairs)
+    rnd.shuffle(shuffled)
+
+    val_size = max(1, int(len(shuffled) * _VAL_RATIO))
+    val = shuffled[:val_size]
+    train = shuffled[val_size:]
+
+    val_labels = {_extract_label(p.completion) for p in val}
+    if len(val_labels) < 2 and len(pairs) >= 4:
+        # Force at least one of each label into the val set.
+        for p in train:
+            label = _extract_label(p.completion)
+            if label not in val_labels:
+                val.append(p)
+                train.remove(p)
+                val_labels.add(label)
+                break
+    return train, val
+
+
+def _extract_label(completion: str) -> str:
+    """Pull the predicted label off a 'label — rationale' completion."""
+    head = completion.split("—", 1)[0].strip().lower()
+    head = head.replace(" ", "_")
+    if head.startswith("not"):
+        return _NEGATIVE_LABEL
+    if head.startswith("eligible"):
+        return _POSITIVE_LABEL
+    return head or _NEGATIVE_LABEL
+
+
+def _parse_predicted_label(response: str) -> str:
+    """Pull a label from the model's free-form generation."""
+    head = response.strip().lower().replace(" ", "_")
+    if head.startswith("not_eligible") or head.startswith("not-eligible") or head.startswith("not"):
+        return _NEGATIVE_LABEL
+    if head.startswith("eligible"):
+        return _POSITIVE_LABEL
+    # Look further into the response for the first hit.
+    if "not_eligible" in head or "not eligible" in response.lower():
+        return _NEGATIVE_LABEL
+    if "eligible" in head:
+        return _POSITIVE_LABEL
+    return "unknown"
+
+
+def _binary_metrics(
+    predictions: list[str], golds: list[str]
+) -> tuple[float, float]:
+    """Accuracy and F1 (eligible as the positive class)."""
+    if not predictions:
+        return 0.0, 0.0
+    correct = sum(1 for p, g in zip(predictions, golds) if p == g)
+    accuracy = correct / len(predictions)
+
+    tp = sum(
+        1 for p, g in zip(predictions, golds) if p == _POSITIVE_LABEL and g == _POSITIVE_LABEL
+    )
+    fp = sum(
+        1 for p, g in zip(predictions, golds) if p == _POSITIVE_LABEL and g != _POSITIVE_LABEL
+    )
+    fn = sum(
+        1 for p, g in zip(predictions, golds) if p != _POSITIVE_LABEL and g == _POSITIVE_LABEL
+    )
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if (precision + recall) > 0
+        else 0.0
+    )
+    return accuracy, f1
 
 
 def execute_real_finetune(
@@ -53,15 +145,8 @@ def execute_real_finetune(
     task: Task | None = None,
     started_at: datetime | None = None,
 ) -> tuple[FineTuneRun, Adapter]:
-    """Run real QLoRA training on a HuggingFace base. Returns (run, adapter).
-
-    Raises ValueError if there isn't enough labelled data to train, and
-    propagates any HF/peft/bitsandbytes runtime errors as-is.
-    """
     started = started_at or datetime.now(timezone.utc)
 
-    # Reuse the mock executor's materialiser — same shape, same audit-trail
-    # field, so reviewers see the same pairs they'd see with the mock.
     from app.services.finetune_executor import _materialise_pairs
 
     pairs = _materialise_pairs(dataset.rows, task)
@@ -69,6 +154,12 @@ def execute_real_finetune(
         raise ValueError(
             "Real training requires at least one labelled row and a task "
             "with a non-empty prompt template. None were materialised."
+        )
+
+    train_pairs, val_pairs = _split_pairs(pairs)
+    if not val_pairs:
+        raise ValueError(
+            "Dataset too small to split off a validation set. Add more rows."
         )
 
     adapter_id = f"adp_{uuid.uuid4().hex[:10]}"
@@ -95,7 +186,6 @@ def execute_real_finetune(
             )
         )
 
-    # Defer heavy imports until we're actually training.
     import torch
     from datasets import Dataset as HFDataset
     from peft import (
@@ -121,11 +211,21 @@ def execute_real_finetune(
         "Dataset",
         f"Loaded {dataset.row_count} examples from '{dataset.name}'.",
     )
+    val_label_counts = {
+        _POSITIVE_LABEL: sum(
+            1 for p in val_pairs if _extract_label(p.completion) == _POSITIVE_LABEL
+        ),
+        _NEGATIVE_LABEL: sum(
+            1 for p in val_pairs if _extract_label(p.completion) == _NEGATIVE_LABEL
+        ),
+    }
     _emit(
         "stage_pairs",
         "Materialise prompts",
-        f"Built {len(pairs)} (prompt, completion) pairs from "
-        f"task '{task.id if task else '?'}'.",
+        f"Built {len(pairs)} pairs; train/val split {len(train_pairs)}/"
+        f"{len(val_pairs)}; val labels = "
+        f"{val_label_counts[_POSITIVE_LABEL]} eligible, "
+        f"{val_label_counts[_NEGATIVE_LABEL]} not_eligible.",
     )
 
     tokenizer = AutoTokenizer.from_pretrained(base_model)
@@ -174,8 +274,8 @@ def execute_real_finetune(
         f"({100 * trainable / total:.2f}%).",
     )
 
-    # Build training set as ChatML using the tokenizer's template.
-    def _format_pair(pair: TrainingPair) -> str:
+    # Format training set with full assistant turn (loss target).
+    def _format_train(pair: TrainingPair) -> str:
         messages = [
             {"role": "user", "content": pair.prompt},
             {"role": "assistant", "content": pair.completion},
@@ -184,8 +284,8 @@ def execute_real_finetune(
             messages, tokenize=False, add_generation_prompt=False
         )
 
-    formatted = [{"text": _format_pair(p)} for p in pairs]
-    hf_ds = HFDataset.from_list(formatted)
+    formatted = [{"text": _format_train(p)} for p in train_pairs]
+    hf_train_ds = HFDataset.from_list(formatted)
 
     def _tokenize(batch):
         out = tokenizer(
@@ -197,14 +297,84 @@ def execute_real_finetune(
         out["labels"] = [list(ids) for ids in out["input_ids"]]
         return out
 
-    tokenized = hf_ds.map(_tokenize, batched=True, remove_columns=["text"])
+    tokenized_train = hf_train_ds.map(
+        _tokenize, batched=True, remove_columns=["text"]
+    )
 
+    # Per-epoch training-loss + per-epoch validation-eval state.
     losses: list[float] = []
+    history: list[FineTuneStep] = []
+
+    def _evaluate_on_val() -> tuple[float, float, float]:
+        """Run greedy generation against the val pairs, parse the label,
+        return (accuracy, f1, mean_token_loss). Token loss is approximated
+        as -log probability of the gold completion's first token; we just
+        re-use the standard forward and read out cross-entropy. Cheaper to
+        leave that out and report 0.0 — accuracy/f1 are what reviewers
+        care about.
+        """
+        model.eval()
+        preds: list[str] = []
+        golds: list[str] = []
+        for pair in val_pairs:
+            messages = [
+                {"role": "user", "content": pair.prompt},
+            ]
+            chat_text = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            inputs = tokenizer(chat_text, return_tensors="pt").to(model.device)
+            with torch.no_grad():
+                output = model.generate(
+                    **inputs,
+                    max_new_tokens=_VAL_MAX_NEW_TOKENS,
+                    do_sample=False,
+                    pad_token_id=tokenizer.pad_token_id,
+                )
+            prompt_len = inputs["input_ids"].shape[-1]
+            new_tokens = output[0, prompt_len:]
+            response = tokenizer.decode(new_tokens, skip_special_tokens=True)
+            preds.append(_parse_predicted_label(response))
+            golds.append(_extract_label(pair.completion))
+        model.train()
+        accuracy, f1 = _binary_metrics(preds, golds)
+        return accuracy, f1, 0.0
 
     class _LossCallback(TrainerCallback):
         def on_log(self, args, state, control, logs=None, **kwargs):
             if logs and "loss" in logs:
                 losses.append(float(logs["loss"]))
+
+    class _PerEpochEvalCallback(TrainerCallback):
+        def on_epoch_end(self, args, state, control, **kwargs):
+            epoch = int(round(state.epoch or 0))
+            # state.epoch may be float (e.g. 1.0). Map to 1-based int.
+            if epoch < 1:
+                epoch = max(1, len(history) + 1)
+            # Recent epoch's training loss = mean of new losses since last entry.
+            already_consumed = sum(1 for _ in history)
+            steps_per_epoch = max(1, len(losses) // max(1, hyperparams.epochs))
+            chunk_start = already_consumed * steps_per_epoch
+            chunk = losses[chunk_start:] or losses[-1:]
+            avg_loss = sum(chunk) / len(chunk) if chunk else 0.0
+
+            accuracy, f1, _ = _evaluate_on_val()
+            history.append(
+                FineTuneStep(
+                    epoch=epoch,
+                    accuracy=round(accuracy, 4),
+                    f1=round(f1, 4),
+                    evalLoss=round(avg_loss, 4),
+                )
+            )
+            _emit(
+                f"stage_epoch_{epoch}",
+                f"Epoch {epoch} eval",
+                f"Validation on {len(val_pairs)} examples: "
+                f"accuracy={accuracy:.3f}, f1={f1:.3f}, "
+                f"train_loss={avg_loss:.4f}.",
+                ms=int(_VAL_MAX_NEW_TOKENS * len(val_pairs) * 30),
+            )
 
     args = TrainingArguments(
         output_dir=str(adapter_path / "training_artifacts"),
@@ -230,9 +400,9 @@ def execute_real_finetune(
     trainer = Trainer(
         model=model,
         args=args,
-        train_dataset=tokenized,
+        train_dataset=tokenized_train,
         data_collator=data_collator,
-        callbacks=[_LossCallback()],
+        callbacks=[_LossCallback(), _PerEpochEvalCallback()],
     )
 
     _emit(
@@ -243,10 +413,11 @@ def execute_real_finetune(
         f"lr={hyperparams.learning_rate}, optim=paged_adamw_8bit.",
     )
 
+    train_start = time.monotonic()
     train_result = trainer.train()
+    train_seconds = time.monotonic() - train_start
     final_loss = float(train_result.training_loss)
 
-    # Save adapter weights to disk under data/adapters/<adapter_id>/.
     model.save_pretrained(str(adapter_path))
     tokenizer.save_pretrained(str(adapter_path))
 
@@ -254,28 +425,30 @@ def execute_real_finetune(
         "stage_save",
         "Save adapter",
         f"Saved LoRA weights and tokenizer to data/adapters/{adapter_id}/. "
-        f"Final training loss: {final_loss:.4f}.",
+        f"Final training loss: {final_loss:.4f}. Wall-clock: {train_seconds:.1f}s.",
     )
 
-    history = _step_loss_to_epoch_history(losses, hyperparams.epochs)
+    final_step = history[-1] if history else None
+    final_accuracy = final_step.accuracy if final_step else 0.0
+    final_f1 = final_step.f1 if final_step else 0.0
 
     metrics = FineTuneMetrics(
-        accuracy=None,
-        f1=None,
+        accuracy=round(final_accuracy, 4),
+        f1=round(final_f1, 4),
         evalLoss=round(final_loss, 4),
         notes=(
             "Real QLoRA training on "
-            f"{torch.cuda.get_device_name(0)}. accuracy/f1 omitted — too few "
-            "validation examples to compute reliably; see the loss curve."
+            f"{torch.cuda.get_device_name(0)}. accuracy/f1 measured on a "
+            f"{len(val_pairs)}-example held-out split via greedy generation."
         ),
         history=history,
     )
 
     _emit(
         "stage_evaluation",
-        "Evaluation",
-        f"Final training loss {final_loss:.4f} (no held-out eval on "
-        f"{dataset.row_count}-row dataset).",
+        "Final Evaluation",
+        f"Final val accuracy {final_accuracy:.3f}, f1 {final_f1:.3f} on "
+        f"{len(val_pairs)} held-out examples (final train loss {final_loss:.4f}).",
     )
 
     relative_weights = f"data/adapters/{adapter_id}"
@@ -287,11 +460,16 @@ def execute_real_finetune(
         version="0.1.0",
         status="trained",
         trainingDataSummary=(
-            f"{dataset.row_count} examples from '{dataset.name}' "
-            f"(real QLoRA on {base_model})."
+            f"{len(train_pairs)} train + {len(val_pairs)} val examples from "
+            f"'{dataset.name}' (real QLoRA on {base_model})."
         ),
         evaluationMetrics=EvaluationMetrics(
-            notes=f"Final training loss {final_loss:.4f}",
+            accuracy=round(final_accuracy, 4),
+            f1=round(final_f1, 4),
+            notes=(
+                f"Held-out val accuracy {final_accuracy:.3f}, f1 {final_f1:.3f}; "
+                f"final training loss {final_loss:.4f}."
+            ),
         ),
         weightsPath=relative_weights,
         createdAt=cursor,
@@ -313,8 +491,6 @@ def execute_real_finetune(
         finishedAt=cursor,
     )
 
-    # Free GPU memory before returning so the FastAPI worker doesn't keep
-    # ~3GB resident between requests.
     del trainer, model, tokenizer
     import gc
 
@@ -333,33 +509,3 @@ def _count_trainable(model) -> tuple[int, int]:
         if param.requires_grad:
             trainable += n
     return trainable, total
-
-
-def _step_loss_to_epoch_history(
-    losses: list[float], epochs: int
-) -> list[FineTuneStep]:
-    """Aggregate per-step training losses into per-epoch averages.
-
-    accuracy/f1 in each FineTuneStep are honest placeholders: the chart
-    expects the field, but for tiny datasets we can't compute meaningful
-    classification metrics, so we leave them at 0.0 and the UI renders
-    only the loss curve usefully. (The detail card text already explains.)
-    """
-    if not losses or epochs <= 0:
-        return []
-    steps_per_epoch = max(1, len(losses) // epochs)
-    history: list[FineTuneStep] = []
-    for ep in range(epochs):
-        start_idx = ep * steps_per_epoch
-        end_idx = (ep + 1) * steps_per_epoch if ep < epochs - 1 else len(losses)
-        chunk = losses[start_idx:end_idx] or losses[-1:]
-        avg = sum(chunk) / len(chunk)
-        history.append(
-            FineTuneStep(
-                epoch=ep + 1,
-                accuracy=0.0,
-                f1=0.0,
-                evalLoss=round(avg, 4),
-            )
-        )
-    return history

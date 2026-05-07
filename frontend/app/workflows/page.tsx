@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { DeleteWorkflowButton } from "@/components/delete-workflow-button";
 import { NewWorkflowForm } from "@/components/new-workflow-form";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
@@ -33,24 +34,34 @@ export default async function WorkflowsPage() {
         ) : (
           <div className="space-y-3">
             {workflows.map((w) => (
-              <Link
+              <div
                 key={w.id}
-                href={`/workflows/${w.id}`}
-                className="block rounded-lg border border-zinc-200 dark:border-zinc-800 p-5 bg-white dark:bg-zinc-950 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors"
+                className="relative rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors"
               >
-                <div className="flex items-baseline justify-between gap-3">
-                  <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
-                    {w.name}
-                  </h2>
-                  <span className="text-xs text-zinc-500">v{w.version}</span>
+                <Link
+                  href={`/workflows/${w.id}`}
+                  className="block p-5 pr-24"
+                >
+                  <div className="flex items-baseline gap-3">
+                    <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
+                      {w.name}
+                    </h2>
+                    <span className="text-xs text-zinc-500">v{w.version}</span>
+                  </div>
+                  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                    {w.description}
+                  </p>
+                  <p className="mt-2 text-xs text-zinc-500">
+                    {w.nodes.length} nodes · {w.edges.length} edges · Open editor →
+                  </p>
+                </Link>
+                <div className="absolute top-3 right-3">
+                  <DeleteWorkflowButton
+                    workflowId={w.id}
+                    workflowName={w.name}
+                  />
                 </div>
-                <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                  {w.description}
-                </p>
-                <p className="mt-2 text-xs text-zinc-500">
-                  {w.nodes.length} nodes · {w.edges.length} edges · Open editor →
-                </p>
-              </Link>
+              </div>
             ))}
           </div>
         )}

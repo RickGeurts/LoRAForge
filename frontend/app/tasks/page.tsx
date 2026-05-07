@@ -26,6 +26,14 @@ export default async function TasksPage() {
         title="Tasks"
         description="Define what your AI nodes do. Adapters, datasets, and workflow nodes all reference a task by id."
       />
+      <div className="px-8 pt-3 pb-2 flex justify-end max-w-3xl">
+        <Link
+          href="/tasks/new"
+          className="text-sm px-3 py-1.5 rounded-md bg-zinc-900 text-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 hover:opacity-90"
+        >
+          + New task
+        </Link>
+      </div>
       <section className="px-8 py-6 space-y-3 max-w-3xl">
         {error ? (
           <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900 p-4 text-sm text-amber-900 dark:text-amber-200">

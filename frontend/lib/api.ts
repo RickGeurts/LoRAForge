@@ -262,4 +262,25 @@ export const api = {
   tasks: (group?: NodeGroup) =>
     request<Task[]>(`/tasks${group ? `?group=${group}` : ""}`),
   task: (id: string) => request<Task>(`/tasks/${id}`),
+  createTask: (payload: {
+    id?: string;
+    name: string;
+    description: string;
+    promptTemplate: string;
+    expectedOutput: string;
+    nodeGroup: NodeGroup;
+    defaultBaseModel: string;
+  }) => request<Task>("/tasks", json(payload)),
+  replaceTask: (
+    id: string,
+    payload: {
+      name: string;
+      description: string;
+      promptTemplate: string;
+      expectedOutput: string;
+      nodeGroup: NodeGroup;
+      defaultBaseModel: string;
+    },
+  ) => request<Task>(`/tasks/${id}`, { ...json(payload), method: "PUT" }),
+  deleteTask: (id: string) => requestVoid(`/tasks/${id}`, { method: "DELETE" }),
 };

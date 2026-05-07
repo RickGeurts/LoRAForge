@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { DeleteTaskButton } from "@/components/delete-task-button";
 import { PageHeader } from "@/components/page-header";
 import { api, type NodeGroup, type Task } from "@/lib/api";
 
@@ -29,14 +30,14 @@ export default async function TaskDetailPage({
   return (
     <div className="flex flex-col">
       <PageHeader title={task.name} description={task.description} />
-      <div className="px-8 pt-3 pb-2 flex items-center justify-between gap-3">
+      <div className="px-8 pt-3 pb-2 flex items-center justify-between gap-3 flex-wrap">
         <Link
           href="/tasks"
           className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-50"
         >
           ← All tasks
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono text-xs text-zinc-500">{task.id}</span>
           <span
             className={`text-xs px-2 py-0.5 rounded-full ${GROUP_TONE[task.nodeGroup]}`}
@@ -48,6 +49,15 @@ export default async function TaskDetailPage({
               builtin
             </span>
           ) : null}
+          <Link
+            href={`/tasks/${task.id}/edit`}
+            className="text-sm px-3 py-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+          >
+            Edit
+          </Link>
+          {task.builtin ? null : (
+            <DeleteTaskButton taskId={task.id} taskName={task.name} />
+          )}
         </div>
       </div>
 

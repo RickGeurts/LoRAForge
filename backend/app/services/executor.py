@@ -97,6 +97,55 @@ def _mock_summary(node: WorkflowNode, inputs: dict[str, Any]) -> tuple[TraceStat
     return summaries.get(node.type, ("ok", f"Executed {node.type}."))
 
 
+def _run_hf_node(
+    node: WorkflowNode,
+    inputs: dict[str, Any],
+    adapter: Adapter,
+    task: Task | None,
+) -> tuple[TraceStatus, str, str | None, int | None, int | None]:
+    """Run inference against the adapter's local LoRA weights via HF.
+
+    Returns (status, summary, model, total_tokens, latency_ms). On any
+    failure (missing weights, load error, generation error) falls back to
+    the mock summary with a 'warn' status — runs always finish.
+    """
+    template = task.prompt_template if task else ""
+    if not template:
+        status, summary = _mock_summary(node, inputs)
+        return status, summary, None, None, None
+
+    format_inputs = _PermissiveInputs(inputs)
+    format_inputs.setdefault("document", "the input document")
+    prompt = template.format_map(format_inputs)
+
+    from app.services import hf_inference
+
+    result = hf_inference.generate(
+        prompt=prompt,
+        base_model=adapter.base_model,
+        weights_path=adapter.weights_path or "",
+    )
+
+    prefix = f"[adapter {adapter.id} v{adapter.version} (LoRA on local weights)] "
+    if result.error:
+        _, mock = _mock_summary(node, inputs)
+        return (
+            "warn",
+            f"[LoRA inference failed: {result.error}] " + mock,
+            None,
+            None,
+            None,
+        )
+
+    return (
+        "ok",
+        prefix + result.response,
+        result.model,
+        result.total_tokens,
+        result.latency_ms,
+    )
+
+
 def _run_ai_node(
     node: WorkflowNode,
     inputs: dict[str, Any],
@@ -236,7 +285,20 @@ def execute_workflow(
         adapter_id = adapter.id if adapter else None
         adapter_version = adapter.version if adapter else None
 
-        if use_ollama and node.group == "ai":
+        if (
+            node.group == "ai"
+            and adapter is not None
+            and adapter.weights_path
+        ):
+            # Trained LoRA bound — route through HF inference. Bypasses the
+            # Ollama installed-models check entirely; the adapter knows its
+            # own base model.
+            task = tasks.get(node.type)
+            status, summary, model, tokens, latency_ms = _run_hf_node(
+                node, inputs, adapter, task
+            )
+            step_ms = latency_ms if latency_ms is not None else _NODE_STEP_MS
+        elif use_ollama and node.group == "ai":
             base_model, status_override, prefix = _resolve_ai_model(
                 node, adapter, fallback_model, installed_names
             )

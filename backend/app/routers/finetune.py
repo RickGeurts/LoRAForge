@@ -71,3 +71,14 @@ def create_finetune_run(
     session.add(FineTuneRunTable.from_api(run))
     session.commit()
     return run
+
+
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_finetune_run(
+    run_id: str, session: Session = Depends(get_session)
+) -> None:
+    row = session.get(FineTuneRunTable, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Fine-tune run not found")
+    session.delete(row)
+    session.commit()

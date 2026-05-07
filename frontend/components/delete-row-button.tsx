@@ -1,0 +1,67 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+
+import { api } from "@/lib/api";
+
+type Kind = "run" | "adapter" | "finetune";
+
+const NOUN: Record<Kind, string> = {
+  run: "run",
+  adapter: "adapter",
+  finetune: "fine-tune run",
+};
+
+export function DeleteRowButton({
+  kind,
+  id,
+  label,
+  className,
+}: {
+  kind: Kind;
+  id: string;
+  label: string;
+  className?: string;
+}) {
+  const router = useRouter();
+  const [submitting, setSubmitting] = useState(false);
+
+  const onClick = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (
+      !window.confirm(
+        `Delete ${NOUN[kind]} "${label}"? This can't be undone.`,
+      )
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      if (kind === "run") await api.deleteRun(id);
+      else if (kind === "adapter") await api.deleteAdapter(id);
+      else if (kind === "finetune") await api.deleteFinetuneRun(id);
+      router.refresh();
+    } catch (err) {
+      window.alert(
+        err instanceof Error ? `Delete failed: ${err.message}` : "Delete failed.",
+      );
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={submitting}
+      className={
+        className ??
+        "text-xs px-2 py-1 rounded-md text-zinc-500 hover:text-red-700 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 transition-colors"
+      }
+    >
+      {submitting ? "Deleting…" : "Delete"}
+    </button>
+  );
+}

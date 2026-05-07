@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { DeleteRowButton } from "@/components/delete-row-button";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
@@ -26,36 +27,47 @@ export default async function RunsPage() {
         ) : runs.length === 0 ? (
           <p className="text-sm text-zinc-500">No runs yet.</p>
         ) : (
-          runs.map((r) => (
-            <Link
-              key={r.id}
-              href={`/runs/${r.id}`}
-              className="block rounded-lg border border-zinc-200 dark:border-zinc-800 p-5 bg-white dark:bg-zinc-950 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors"
-            >
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="font-mono text-xs text-zinc-500">{r.id}</span>
-                <span className="text-xs text-zinc-500">{r.status}</span>
-              </div>
-              {r.output ? (
-                <>
-                  <p className="mt-2 text-sm text-zinc-900 dark:text-zinc-50">
-                    {r.output.decision}{" "}
-                    <span className="text-zinc-500">
-                      ({Math.round(r.output.confidence * 100)}% confidence)
+          [...runs]
+            .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+            .map((r) => (
+              <div
+                key={r.id}
+                className="relative rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors"
+              >
+                <Link
+                  href={`/runs/${r.id}`}
+                  className="block p-5 pr-20"
+                >
+                  <div className="flex items-baseline gap-3">
+                    <span className="font-mono text-xs text-zinc-500">
+                      {r.id}
                     </span>
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                    {r.output.explanation}
-                  </p>
-                  <p className="mt-2 text-xs text-zinc-500">
-                    {r.trace.length} step{r.trace.length === 1 ? "" : "s"} · Open run →
-                  </p>
-                </>
-              ) : (
-                <p className="mt-2 text-sm text-zinc-500">No output yet.</p>
-              )}
-            </Link>
-          ))
+                    <span className="text-xs text-zinc-500">{r.status}</span>
+                  </div>
+                  {r.output ? (
+                    <>
+                      <p className="mt-2 text-sm text-zinc-900 dark:text-zinc-50">
+                        {r.output.decision}{" "}
+                        <span className="text-zinc-500">
+                          ({Math.round(r.output.confidence * 100)}% confidence)
+                        </span>
+                      </p>
+                      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400 line-clamp-2">
+                        {r.output.explanation}
+                      </p>
+                      <p className="mt-2 text-xs text-zinc-500">
+                        {r.trace.length} step{r.trace.length === 1 ? "" : "s"} · Open run →
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-sm text-zinc-500">No output yet.</p>
+                  )}
+                </Link>
+                <div className="absolute top-3 right-3">
+                  <DeleteRowButton kind="run" id={r.id} label={r.id} />
+                </div>
+              </div>
+            ))
         )}
       </section>
     </div>

@@ -1,3 +1,6 @@
+import shutil
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
@@ -5,6 +8,8 @@ from app.db import get_session
 from app.models.adapter import Adapter, AdapterTable
 
 router = APIRouter(prefix="/adapters", tags=["adapters"])
+
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 @router.get("", response_model=list[Adapter], response_model_by_alias=True)
@@ -74,5 +79,13 @@ def delete_adapter(
     row = session.get(AdapterTable, adapter_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Adapter not found")
+
+    # Drop any LoRA weights from disk so the next training run for the
+    # same id starts clean. Only does anything for HF-trained adapters.
+    if row.weights_path:
+        weights_dir = _BACKEND_ROOT / row.weights_path
+        if weights_dir.exists() and weights_dir.is_dir():
+            shutil.rmtree(weights_dir, ignore_errors=True)
+
     session.delete(row)
     session.commit()

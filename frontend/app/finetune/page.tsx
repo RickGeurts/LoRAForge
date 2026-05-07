@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { DeleteRowButton } from "@/components/delete-row-button";
 import { PageHeader } from "@/components/page-header";
 import { FineTunePipeline } from "@/components/finetune-pipeline";
 import { FineTuneForm } from "@/components/finetune-form";
@@ -64,12 +65,12 @@ export default async function FineTunePage() {
           ) : (
             <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {sorted.map((r) => (
-                <li key={r.id}>
+                <li key={r.id} className="relative">
                   <Link
                     href={`/finetune/${r.id}`}
-                    className="block px-5 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                    className="block px-5 py-3 pr-20 hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                   >
-                    <div className="flex items-baseline justify-between gap-3">
+                    <div className="flex items-baseline gap-3">
                       <p className="text-sm text-zinc-900 dark:text-zinc-50">
                         {r.adapterName}{" "}
                         <span className="text-zinc-500 font-mono text-xs">
@@ -90,6 +91,13 @@ export default async function FineTunePage() {
                       </p>
                     ) : null}
                   </Link>
+                  <div className="absolute top-3 right-3">
+                    <DeleteRowButton
+                      kind="finetune"
+                      id={r.id}
+                      label={r.adapterName}
+                    />
+                  </div>
                 </li>
               ))}
             </ul>

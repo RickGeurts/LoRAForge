@@ -258,6 +258,7 @@ export const api = {
     requestVoid(`/workflows/${id}`, { method: "DELETE" }),
 
   createRun: (payload: RunCreate) => request<Run>("/runs", json(payload)),
+  deleteRun: (id: string) => requestVoid(`/runs/${id}`, { method: "DELETE" }),
 
   datasets: () => request<Dataset[]>("/datasets"),
   dataset: (id: string) => request<Dataset>(`/datasets/${id}`),
@@ -270,6 +271,8 @@ export const api = {
   finetuneRun: (id: string) => request<FineTuneRun>(`/finetune/${id}`),
   createFinetuneRun: (payload: FineTuneRunCreate) =>
     request<FineTuneRun>("/finetune", json(payload)),
+  deleteFinetuneRun: (id: string) =>
+    requestVoid(`/finetune/${id}`, { method: "DELETE" }),
 
   templates: () => request<Template[]>("/templates"),
   cloneTemplate: (id: string) =>

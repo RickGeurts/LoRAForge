@@ -76,3 +76,12 @@ def create_run(
     session.commit()
     session.refresh(row)
     return row.to_api()
+
+
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_run(run_id: str, session: Session = Depends(get_session)) -> None:
+    row = session.get(RunTable, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    session.delete(row)
+    session.commit()

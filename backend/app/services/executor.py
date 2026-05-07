@@ -17,6 +17,7 @@ from typing import Any
 
 from app.models.adapter import Adapter
 from app.models.run import RunOutput, TraceEntry, TraceStatus
+from app.models.task import Task
 from app.models.workflow import Workflow, WorkflowNode
 from app.services import ollama_client
 
@@ -26,20 +27,17 @@ _AI_SYSTEM_PROMPT = (
     "You are a regulatory analysis assistant for bank resolution workflows. "
     "Be concise and factual. Reply in 1-2 short sentences. Do not speculate."
 )
-_AI_PROMPTS: dict[str, str] = {
-    "clause_extractor": (
-        "List the most likely clauses to extract from prospectus '{document}' "
-        "that affect MREL eligibility (subordination, ranking, maturity)."
-    ),
-    "mrel_classifier": (
-        "Briefly assess MREL eligibility for the prospectus '{document}', "
-        "given subordination and maturity > 1y are typical eligibility criteria."
-    ),
-    "instrument_classifier": (
-        "Briefly classify the financial instrument described in prospectus "
-        "'{document}' (e.g. Tier 2 capital, senior unsecured, covered bond)."
-    ),
-}
+
+
+class _PermissiveInputs(dict):
+    """format_map dict that returns "" for missing keys.
+
+    Lets users write prompts with placeholders that may not be in the
+    runtime inputs (e.g. {clause}) without blowing up the run.
+    """
+
+    def __missing__(self, key: str) -> str:  # type: ignore[override]
+        return ""
 
 
 def _topological_order(workflow: Workflow) -> list[WorkflowNode]:
@@ -103,22 +101,25 @@ def _run_ai_node(
     node: WorkflowNode,
     inputs: dict[str, Any],
     model: str | None,
+    task: Task | None,
     *,
     prefix: str = "",
 ) -> tuple[TraceStatus, str, str | None, int | None, int | None]:
     """Call Ollama for AI nodes, falling back to the mock summary on failure.
 
-    `prefix` lets the caller prepend a short note (e.g. base-model fallback
-    warning) to the rendered summary. Returns
+    `task` is the resolved Task for this node (its prompt template is the
+    source of truth). `prefix` lets the caller prepend a short note (e.g.
+    base-model fallback warning) to the rendered summary. Returns
     (status, summary, model, total_tokens, latency_ms).
     """
-    template = _AI_PROMPTS.get(node.type)
-    if template is None:
+    template = task.prompt_template if task else ""
+    if not template:
         status, summary = _mock_summary(node, inputs)
         return status, prefix + summary, None, None, None
 
-    document = str(inputs.get("document") or "the input document")
-    prompt = template.format(document=document)
+    format_inputs = _PermissiveInputs(inputs)
+    format_inputs.setdefault("document", "the input document")
+    prompt = template.format_map(format_inputs)
     result = ollama_client.generate(prompt, system=_AI_SYSTEM_PROMPT, model=model)
 
     if result.stub or not result.response:
@@ -185,6 +186,7 @@ def execute_workflow(
     started_at: datetime | None = None,
     use_ollama: bool | None = None,
     adapters: dict[str, Adapter] | None = None,
+    tasks: dict[str, Task] | None = None,
 ) -> tuple[str, RunOutput, list[TraceEntry], datetime]:
     """Run a workflow against inputs.
 
@@ -196,10 +198,15 @@ def execute_workflow(
     model and is recorded in the trace for audit. When omitted, AI nodes
     behave as before (global default model, no adapter citation).
 
+    `tasks` is the live Task registry, keyed by id. AI nodes look up
+    `tasks[node.type].prompt_template` to build the Ollama prompt. When
+    omitted or the lookup misses, the node falls back to the mock summary.
+
     Returns (status, output, trace, finished_at).
     """
     started = started_at or datetime.now(timezone.utc)
     adapters = adapters or {}
+    tasks = tasks or {}
     if use_ollama is None:
         status_info = ollama_client.get_status()
         use_ollama = bool(status_info.get("reachable"))
@@ -233,8 +240,9 @@ def execute_workflow(
             base_model, status_override, prefix = _resolve_ai_model(
                 node, adapter, fallback_model, installed_names
             )
+            task = tasks.get(node.type)
             status, summary, model, tokens, latency_ms = _run_ai_node(
-                node, inputs, base_model, prefix=prefix
+                node, inputs, base_model, task, prefix=prefix
             )
             if status_override is not None:
                 status = status_override

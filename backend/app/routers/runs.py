@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from app.db import get_session
 from app.models.adapter import AdapterTable
 from app.models.run import Run, RunCreate, RunTable
+from app.models.task import TaskTable
 from app.models.workflow import WorkflowTable
 from app.services.executor import execute_workflow
 
@@ -48,8 +49,15 @@ def create_run(
     adapters = {
         row.id: row.to_api() for row in session.exec(select(AdapterTable)).all()
     }
+    tasks = {
+        row.id: row.to_api() for row in session.exec(select(TaskTable)).all()
+    }
     final_status, output, trace, finished_at = execute_workflow(
-        workflow, payload.inputs, started_at=started_at, adapters=adapters
+        workflow,
+        payload.inputs,
+        started_at=started_at,
+        adapters=adapters,
+        tasks=tasks,
     )
 
     run = Run(

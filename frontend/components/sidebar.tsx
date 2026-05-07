@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   FileStack,
+  Sparkles,
   Workflow,
   Boxes,
   Database,
@@ -16,6 +17,7 @@ import {
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/templates", label: "Templates", icon: FileStack },
+  { href: "/tasks", label: "Tasks", icon: Sparkles },
   { href: "/workflows", label: "Workflows", icon: Workflow },
   { href: "/adapters", label: "Adapters", icon: Boxes },
   { href: "/datasets", label: "Datasets", icon: Database },

@@ -177,6 +177,19 @@ export type Template = {
   edgeCount: number;
 };
 
+export type Task = {
+  id: string;
+  name: string;
+  description: string;
+  promptTemplate: string;
+  expectedOutput: string;
+  nodeGroup: NodeGroup;
+  defaultBaseModel: string;
+  builtin: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type OllamaStatus = {
   reachable: boolean;
   baseUrl: string;
@@ -245,4 +258,8 @@ export const api = {
   templates: () => request<Template[]>("/templates"),
   cloneTemplate: (id: string) =>
     request<Workflow>(`/templates/${id}/clone`, { method: "POST" }),
+
+  tasks: (group?: NodeGroup) =>
+    request<Task[]>(`/tasks${group ? `?group=${group}` : ""}`),
+  task: (id: string) => request<Task>(`/tasks/${id}`),
 };

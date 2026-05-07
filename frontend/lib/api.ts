@@ -217,6 +217,11 @@ export const api = {
 
   createWorkflow: (payload: Workflow) =>
     request<Workflow>("/workflows", json(payload)),
+  createBlankWorkflow: (name: string) =>
+    request<Workflow>(
+      `/workflows/blank?name=${encodeURIComponent(name)}`,
+      { method: "POST" },
+    ),
   replaceWorkflow: (id: string, payload: Workflow) =>
     request<Workflow>(`/workflows/${id}`, { ...json(payload), method: "PUT" }),
   deleteWorkflow: (id: string) =>

@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,6 +23,34 @@ def get_workflow(
     row = session.get(WorkflowTable, workflow_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
+    return row.to_api()
+
+
+@router.post(
+    "/blank",
+    response_model=Workflow,
+    response_model_by_alias=True,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_blank_workflow(
+    name: str | None = None,
+    session: Session = Depends(get_session),
+) -> Workflow:
+    now = datetime.now(timezone.utc)
+    workflow = Workflow(
+        id=f"wf_{uuid.uuid4().hex[:12]}",
+        name=(name or "").strip() or "Untitled workflow",
+        version="0.1.0",
+        description=None,
+        nodes=[],
+        edges=[],
+        createdAt=now,
+        updatedAt=now,
+    )
+    row = WorkflowTable.from_api(workflow)
+    session.add(row)
+    session.commit()
+    session.refresh(row)
     return row.to_api()
 
 

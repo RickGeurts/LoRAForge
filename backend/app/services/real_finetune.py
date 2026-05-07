@@ -21,6 +21,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 from app.models.adapter import Adapter, EvaluationMetrics
 from app.models.dataset import Dataset
@@ -33,6 +34,8 @@ from app.models.finetune import (
 )
 from app.models.run import TraceEntry
 from app.models.task import Task
+
+ProgressCallback = Callable[[dict], None]
 
 ADAPTERS_ROOT = (
     Path(__file__).resolve().parent.parent.parent / "data" / "adapters"
@@ -144,6 +147,7 @@ def execute_real_finetune(
     hyperparams: FineTuneHyperparams,
     task: Task | None = None,
     started_at: datetime | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> tuple[FineTuneRun, Adapter]:
     started = started_at or datetime.now(timezone.utc)
 
@@ -340,10 +344,47 @@ def execute_real_finetune(
         accuracy, f1 = _binary_metrics(preds, golds)
         return accuracy, f1, 0.0
 
+    # Compute total expected steps so the progress fraction is meaningful
+    # before the trainer starts emitting state.global_step.
+    grad_accum = max(1, hyperparams.batch_size)
+    expected_steps_per_epoch = max(1, len(train_pairs) // grad_accum)
+    total_steps_estimate = expected_steps_per_epoch * hyperparams.epochs
+
+    if on_progress:
+        on_progress(
+            {
+                "total_steps": total_steps_estimate,
+                "current_step": 0,
+                "current_epoch": 0,
+                "progress": 0.0,
+            }
+        )
+
     class _LossCallback(TrainerCallback):
         def on_log(self, args, state, control, logs=None, **kwargs):
             if logs and "loss" in logs:
                 losses.append(float(logs["loss"]))
+
+    class _ProgressCallback(TrainerCallback):
+        """Report (current_step, total_steps, current_epoch, progress) to the
+        caller after every optimiser step so the UI can show a live bar.
+        """
+
+        def on_step_end(self, args, state, control, **kwargs):
+            if on_progress is None:
+                return
+            total = state.max_steps or total_steps_estimate
+            step = state.global_step or 0
+            epoch = int(state.epoch or 0) + 1
+            progress = step / total if total > 0 else 0.0
+            on_progress(
+                {
+                    "total_steps": total,
+                    "current_step": step,
+                    "current_epoch": min(epoch, hyperparams.epochs),
+                    "progress": min(1.0, progress),
+                }
+            )
 
     class _PerEpochEvalCallback(TrainerCallback):
         def on_epoch_end(self, args, state, control, **kwargs):
@@ -402,7 +443,7 @@ def execute_real_finetune(
         args=args,
         train_dataset=tokenized_train,
         data_collator=data_collator,
-        callbacks=[_LossCallback(), _PerEpochEvalCallback()],
+        callbacks=[_LossCallback(), _PerEpochEvalCallback(), _ProgressCallback()],
     )
 
     _emit(

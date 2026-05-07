@@ -69,6 +69,11 @@ class FineTuneRun(BaseModel):
     training_pairs: list[TrainingPair] = PydanticField(
         default_factory=list, alias="trainingPairs"
     )
+    progress: float = 0.0
+    current_step: int = PydanticField(default=0, alias="currentStep")
+    total_steps: int = PydanticField(default=0, alias="totalSteps")
+    current_epoch: int = PydanticField(default=0, alias="currentEpoch")
+    error: str | None = None
     started_at: datetime = PydanticField(alias="startedAt")
     finished_at: datetime | None = PydanticField(default=None, alias="finishedAt")
 
@@ -98,6 +103,11 @@ class FineTuneRunTable(SQLModel, table=True):
     produced_adapter_id: str | None = None
     trace: list = Field(default_factory=list, sa_column=Column(JSON))
     training_pairs: list = Field(default_factory=list, sa_column=Column(JSON))
+    progress: float = Field(default=0.0)
+    current_step: int = Field(default=0)
+    total_steps: int = Field(default=0)
+    current_epoch: int = Field(default=0)
+    error: str | None = None
     started_at: datetime
     finished_at: datetime | None = None
 
@@ -117,6 +127,11 @@ class FineTuneRunTable(SQLModel, table=True):
             producedAdapterId=self.produced_adapter_id,
             trace=trace,
             trainingPairs=pairs,
+            progress=float(self.progress or 0.0),
+            currentStep=int(self.current_step or 0),
+            totalSteps=int(self.total_steps or 0),
+            currentEpoch=int(self.current_epoch or 0),
+            error=self.error,
             startedAt=self.started_at,
             finishedAt=self.finished_at,
         )
@@ -142,6 +157,11 @@ class FineTuneRunTable(SQLModel, table=True):
             training_pairs=[
                 p.model_dump(by_alias=False, mode="json") for p in run.training_pairs
             ],
+            progress=run.progress,
+            current_step=run.current_step,
+            total_steps=run.total_steps,
+            current_epoch=run.current_epoch,
+            error=run.error,
             started_at=run.started_at,
             finished_at=run.finished_at,
         )

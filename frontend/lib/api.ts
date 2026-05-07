@@ -174,6 +174,11 @@ export type FineTuneRun = {
   producedAdapterId: string | null;
   trace: TraceEntry[];
   trainingPairs: TrainingPair[];
+  progress: number;
+  currentStep: number;
+  totalSteps: number;
+  currentEpoch: number;
+  error: string | null;
   startedAt: string;
   finishedAt: string | null;
 };

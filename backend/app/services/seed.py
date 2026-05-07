@@ -15,6 +15,7 @@ from app.models.run import Run, RunTable
 from app.models.task import Task, TaskTable
 from app.models.workflow import Workflow, WorkflowTable
 from app.services.executor import execute_workflow
+from app.services.mrel_clauses_dataset import build_mrel_clause_rows
 from app.services.templates import mrel_eligibility
 
 _SEED_TS = datetime(2026, 5, 5, tzinfo=timezone.utc)
@@ -144,189 +145,23 @@ def _seed_adapters() -> list[Adapter]:
     ]
 
 
-_MREL_CLAUSE_ROWS: list[dict] = [
-    {
-        "rowId": "r01",
-        "instrument": "Subordinated Tier 2 notes",
-        "clauseRef": "§4.2 Subordination",
-        "excerpt": (
-            "The Notes constitute direct, unsecured and subordinated obligations of "
-            "the Issuer ranking pari passu among themselves and behind the claims of "
-            "all senior creditors."
-        ),
-        "subordination": "subordinated",
-        "maturityYears": 10.0,
-        "secured": False,
-        "governingLaw": "English law",
-        "label": "eligible",
-        "rationale": "Subordinated, no call risk, maturity well above the 1-year threshold.",
-    },
-    {
-        "rowId": "r02",
-        "instrument": "Senior preferred notes",
-        "clauseRef": "§3.1 Status",
-        "excerpt": (
-            "The Notes constitute direct, unsecured and unsubordinated obligations of "
-            "the Issuer ranking pari passu with all other unsecured and unsubordinated "
-            "obligations."
-        ),
-        "subordination": "senior_preferred",
-        "maturityYears": 5.0,
-        "secured": False,
-        "governingLaw": "English law",
-        "label": "not_eligible",
-        "rationale": (
-            "Senior preferred ranks above SNP and subordinated debt — fails the "
-            "subordination requirement."
-        ),
-    },
-    {
-        "rowId": "r03",
-        "instrument": "Senior non-preferred notes",
-        "clauseRef": "§3.2 Subordination on insolvency",
-        "excerpt": (
-            "Upon insolvency of the Issuer, the Notes shall rank junior to senior "
-            "preferred liabilities and senior to subordinated obligations."
-        ),
-        "subordination": "senior_non_preferred",
-        "maturityYears": 6.0,
-        "secured": False,
-        "governingLaw": "French law",
-        "label": "eligible",
-        "rationale": (
-            "SNP sits between senior preferred and subordinated; satisfies "
-            "subordination, maturity > 1y."
-        ),
-    },
-    {
-        "rowId": "r04",
-        "instrument": "Additional Tier 1 capital",
-        "clauseRef": "§5 Loss absorption",
-        "excerpt": (
-            "The Notes are perpetual and contain a contractual write-down feature "
-            "triggered upon the Issuer's CET1 ratio falling below 5.125%."
-        ),
-        "subordination": "deeply_subordinated",
-        "maturityYears": 99.0,
-        "secured": False,
-        "governingLaw": "English law",
-        "label": "eligible",
-        "rationale": (
-            "AT1 is deeply subordinated and loss-absorbing — eligible regardless of "
-            "perpetual maturity."
-        ),
-    },
-    {
-        "rowId": "r05",
-        "instrument": "Covered bond",
-        "clauseRef": "§7 Cover pool",
-        "excerpt": (
-            "The Notes are secured by a cover pool of mortgage receivables in "
-            "accordance with the German Pfandbrief Act."
-        ),
-        "subordination": "senior_preferred",
-        "maturityYears": 7.0,
-        "secured": True,
-        "governingLaw": "German law",
-        "label": "not_eligible",
-        "rationale": "Secured liabilities are excluded from MREL eligibility.",
-    },
-    {
-        "rowId": "r06",
-        "instrument": "Subordinated note (short-dated)",
-        "clauseRef": "§4.1 Maturity",
-        "excerpt": (
-            "The Notes mature on 30 November 2026 and rank junior to all senior "
-            "creditors."
-        ),
-        "subordination": "subordinated",
-        "maturityYears": 0.5,
-        "secured": False,
-        "governingLaw": "English law",
-        "label": "not_eligible",
-        "rationale": "Remaining maturity below 1 year — fails the residual maturity test.",
-    },
-    {
-        "rowId": "r07",
-        "instrument": "Subordinated note with issuer call",
-        "clauseRef": "§4.3 Optional redemption",
-        "excerpt": (
-            "The Issuer may at its option redeem the Notes in whole at par on the "
-            "First Call Date, falling six months after the Issue Date."
-        ),
-        "subordination": "subordinated",
-        "maturityYears": 0.5,
-        "secured": False,
-        "governingLaw": "English law",
-        "label": "not_eligible",
-        "rationale": (
-            "Effective maturity to first call is below 1 year — strong economic "
-            "incentive to redeem early."
-        ),
-    },
-    {
-        "rowId": "r08",
-        "instrument": "Subordinated Tier 2 with regulatory call",
-        "clauseRef": "§4.4 Regulatory call",
-        "excerpt": (
-            "The Issuer may redeem the Notes in whole following a Regulatory Event "
-            "after the Reset Date, being five years after issuance."
-        ),
-        "subordination": "subordinated",
-        "maturityYears": 5.0,
-        "secured": False,
-        "governingLaw": "English law",
-        "label": "eligible",
-        "rationale": "Effective maturity to first call is at least 5 years.",
-    },
-    {
-        "rowId": "r09",
-        "instrument": "Senior preferred (short)",
-        "clauseRef": "§3.1",
-        "excerpt": (
-            "Senior unsecured obligations of the Issuer ranking pari passu with all "
-            "other senior unsecured liabilities."
-        ),
-        "subordination": "senior_preferred",
-        "maturityYears": 3.0,
-        "secured": False,
-        "governingLaw": "Dutch law",
-        "label": "not_eligible",
-        "rationale": "Senior preferred — does not meet the subordination requirement.",
-    },
-    {
-        "rowId": "r10",
-        "instrument": "Senior non-preferred (callable)",
-        "clauseRef": "§3.4 Issuer call",
-        "excerpt": (
-            "The Notes are callable at par after the Optional Redemption Date, "
-            "falling six months prior to the Maturity Date."
-        ),
-        "subordination": "senior_non_preferred",
-        "maturityYears": 0.5,
-        "secured": False,
-        "governingLaw": "French law",
-        "label": "not_eligible",
-        "rationale": (
-            "Subordination is fine, but effective maturity to first call is under 1 year."
-        ),
-    },
-]
-
-
 def _mrel_clause_dataset() -> Dataset:
+    rows = build_mrel_clause_rows()
     return Dataset(
         id=_MREL_CLAUSE_DATASET_ID,
         name="MREL clause eligibility — labelled examples",
         taskType="mrel_classifier",
         sourceType="mock",
         summary=(
-            "10 hand-crafted prospectus clause excerpts labelled MREL-eligible or "
-            "not, with rationale grounded in subordination, secured status, and "
-            "effective maturity to first call."
+            f"{len(rows)} synthetic-but-realistic prospectus clause excerpts "
+            "labelled MREL-eligible or not, generated by cross-producting "
+            "instrument archetypes × maturities × call options × governing law. "
+            "Eligibility follows BRRD/SRMR Article 45b: subordinated, unsecured, "
+            "effective maturity to first call ≥ 1 year, issued by the resolution "
+            "entity."
         ),
-        rowCount=len(_MREL_CLAUSE_ROWS),
-        rows=_MREL_CLAUSE_ROWS,
+        rowCount=len(rows),
+        rows=rows,
         createdAt=_SEED_TS,
     )
 
@@ -360,13 +195,28 @@ def _seed_runs(workflows: list[Workflow]) -> list[Run]:
 
 def _reconcile_datasets(session: Session) -> None:
     # Drop superseded mock datasets if they're still hanging around from an
-    # earlier seed. Insert the canonical MREL clause dataset if missing.
+    # earlier seed. Insert or refresh the canonical MREL clause dataset.
     for old_id in _SUPERSEDED_DATASET_IDS:
         old = session.get(DatasetTable, old_id)
         if old is not None:
             session.delete(old)
-    if session.get(DatasetTable, _MREL_CLAUSE_DATASET_ID) is None:
-        session.add(DatasetTable.from_api(_mrel_clause_dataset()))
+
+    canonical = _mrel_clause_dataset()
+    existing = session.get(DatasetTable, _MREL_CLAUSE_DATASET_ID)
+    if existing is None:
+        session.add(DatasetTable.from_api(canonical))
+        return
+
+    # Refresh in place when the row count is below the canonical size so
+    # the upgrade from the original 10-row hand-crafted dataset to the
+    # generated 200-row dataset takes effect on next boot. We don't
+    # overwrite a larger user-edited dataset.
+    if existing.row_count < canonical.row_count:
+        existing.row_count = canonical.row_count
+        existing.rows = canonical.rows
+        existing.summary = canonical.summary
+        existing.name = canonical.name
+        session.add(existing)
 
 
 def _reconcile_tasks(session: Session) -> None:

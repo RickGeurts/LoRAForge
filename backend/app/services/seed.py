@@ -23,6 +23,48 @@ _SUPERSEDED_DATASET_IDS = ("ds_mrel_corpus", "ds_clauses_v1")
 _MREL_CLAUSE_DATASET_ID = "ds_mrel_clauses"
 
 
+_MREL_PROMPT_V1 = (
+    "Briefly assess MREL eligibility for the prospectus '{document}', "
+    "given subordination and maturity > 1y are typical eligibility criteria."
+)
+_MREL_PROMPT_V2 = (
+    "Classify the following clause excerpts for MREL eligibility "
+    "(eligible / not_eligible). Eligibility requires: subordinated "
+    "(subordinated, SNP, AT1), unsecured, effective maturity to first call "
+    "≥ 1 year, issued by the resolution entity.\n\n"
+    "Clauses:\n{clauses}\n\nVerdict:"
+)
+
+_INSTRUMENT_PROMPT_V1 = (
+    "Briefly classify the financial instrument described in prospectus "
+    "'{document}' (e.g. Tier 2 capital, senior unsecured, covered bond)."
+)
+_INSTRUMENT_PROMPT_V2 = (
+    "Classify the financial instrument described in the following "
+    "prospectus excerpt (e.g. Tier 2 capital, senior unsecured, AT1, "
+    "covered bond):\n\n{prospectus_text}\n\nInstrument type:"
+)
+
+_CLAUSE_PROMPT_V1 = (
+    "List the most likely clauses to extract from prospectus '{document}' "
+    "that affect MREL eligibility (subordination, ranking, maturity)."
+)
+_CLAUSE_PROMPT_V2 = (
+    "Extract the clauses from the following prospectus excerpt that "
+    "affect MREL eligibility (subordination, ranking, maturity, "
+    "governing law). Quote each clause briefly.\n\n{prospectus_text}\n\n"
+    "Relevant clauses:"
+)
+
+# Templates that are safe to upgrade in place: any builtin task whose
+# prompt_template matches one of these strings was never user-edited.
+_UPGRADABLE_PROMPTS: dict[str, set[str]] = {
+    "mrel_classifier": {_MREL_PROMPT_V1},
+    "instrument_classifier": {_INSTRUMENT_PROMPT_V1},
+    "clause_extractor": {_CLAUSE_PROMPT_V1},
+}
+
+
 def _seed_tasks() -> list[Task]:
     return [
         Task(
@@ -32,10 +74,7 @@ def _seed_tasks() -> list[Task]:
                 "Decide whether a financial instrument is MREL-eligible based on "
                 "subordination, secured status, and effective maturity to first call."
             ),
-            promptTemplate=(
-                "Briefly assess MREL eligibility for the prospectus '{document}', "
-                "given subordination and maturity > 1y are typical eligibility criteria."
-            ),
+            promptTemplate=_MREL_PROMPT_V2,
             expectedOutput=(
                 "A short eligibility verdict (eligible / not eligible) plus 1-2 "
                 "sentences of rationale citing subordination and maturity."
@@ -53,10 +92,7 @@ def _seed_tasks() -> list[Task]:
                 "Classify a financial instrument by type (Tier 2, AT1, senior "
                 "preferred, covered bond, …)."
             ),
-            promptTemplate=(
-                "Briefly classify the financial instrument described in prospectus "
-                "'{document}' (e.g. Tier 2 capital, senior unsecured, covered bond)."
-            ),
+            promptTemplate=_INSTRUMENT_PROMPT_V2,
             expectedOutput="Instrument type label and 1-sentence rationale.",
             nodeGroup="ai",
             defaultBaseModel="llama3.1:8b",
@@ -71,10 +107,7 @@ def _seed_tasks() -> list[Task]:
                 "Extract clauses relevant to MREL eligibility (subordination, "
                 "ranking, maturity, governing law) from a prospectus."
             ),
-            promptTemplate=(
-                "List the most likely clauses to extract from prospectus '{document}' "
-                "that affect MREL eligibility (subordination, ranking, maturity)."
-            ),
+            promptTemplate=_CLAUSE_PROMPT_V2,
             expectedOutput=(
                 "Bulleted list of clause references with a one-line excerpt each."
             ),
@@ -220,12 +253,19 @@ def _reconcile_datasets(session: Session) -> None:
 
 
 def _reconcile_tasks(session: Session) -> None:
-    # Insert any builtin task that's missing. Don't overwrite existing rows —
-    # users may have edited a builtin's description or prompt template, and
-    # we should respect that.
+    # Insert any builtin task that's missing, and upgrade prompt templates
+    # that still match a known-old default. User edits are preserved
+    # (anything off the upgradable allow-list is left alone).
     for task in _seed_tasks():
-        if session.get(TaskTable, task.id) is None:
+        existing = session.get(TaskTable, task.id)
+        if existing is None:
             session.add(TaskTable.from_api(task))
+            continue
+        upgrade_from = _UPGRADABLE_PROMPTS.get(task.id, set())
+        if existing.prompt_template in upgrade_from:
+            existing.prompt_template = task.prompt_template
+            existing.updated_at = _SEED_TS
+            session.add(existing)
 
 
 def seed_if_empty(session: Session) -> None:

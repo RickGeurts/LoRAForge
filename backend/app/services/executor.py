@@ -28,6 +28,33 @@ _AI_SYSTEM_PROMPT = (
     "Be concise and factual. Reply in 1-2 short sentences. Do not speculate."
 )
 
+# Each node type's response goes into the run-state under this slot, so
+# downstream nodes can reference it from their prompt templates with
+# {clauses}, {mrel_decision}, etc.
+_OUTPUT_SLOTS: dict[str, str] = {
+    "clause_extractor": "clauses",
+    "mrel_classifier": "mrel_decision",
+    "instrument_classifier": "instrument_classification",
+    "pdf_extractor": "pdf_text",
+    "validator": "validation_result",
+}
+
+# Seeded prospectus text the prospectus_loader stage drops into state,
+# so the demo workflow has real content to extract clauses from. Real
+# PDF parsing is out of MVP scope (CLAUDE.md non-goal).
+_SAMPLE_PROSPECTUS_TEXT = (
+    "PROSPECTUS — EUR 750,000,000 Subordinated Notes due 2031\n\n"
+    "§3 Status: The Notes constitute direct, unsecured and subordinated "
+    "obligations of the Issuer ranking pari passu among themselves and "
+    "behind the claims of all senior creditors.\n\n"
+    "§4.1 Maturity: The Notes mature on 30 November 2031.\n\n"
+    "§4.3 Optional redemption: The Issuer may redeem the Notes in whole "
+    "following a Regulatory Event after the Reset Date, falling five "
+    "years after issuance.\n\n"
+    "§7 Governing Law: English law.\n\n"
+    "§9 Issuer: ResolutionCo plc, the resolution entity of the Group."
+)
+
 
 class _PermissiveInputs(dict):
     """format_map dict that returns "" for missing keys.
@@ -38,6 +65,37 @@ class _PermissiveInputs(dict):
 
     def __missing__(self, key: str) -> str:  # type: ignore[override]
         return ""
+
+
+def _strip_adapter_prefix(summary: str) -> str:
+    """Drop the leading '[adapter ...] ' that AI-node summaries carry."""
+    if summary.startswith("[") and "] " in summary:
+        return summary.split("] ", 1)[1]
+    return summary
+
+
+def _parse_eligibility_label(text: str) -> str | None:
+    """Pull 'eligible' / 'not_eligible' out of a free-form AI response.
+
+    Trained adapters emit '<label> — <rationale>' verbatim, untrained
+    bases ramble; the ordering below covers both. Returns None if no
+    label can be identified.
+    """
+    cleaned = _strip_adapter_prefix(text).strip().lower()
+    head = cleaned.lstrip(" *_-")
+    if head.startswith(("not_eligible", "not-eligible", "not eligible")):
+        return "not_eligible"
+    if head.startswith("eligible"):
+        return "eligible"
+    # Fall back to a substring scan when the model buries the verdict
+    # inside a longer response.
+    if "not eligible" in cleaned or "not_eligible" in cleaned:
+        return "not_eligible"
+    if "mrel-eligible" in cleaned or "mrel eligible" in cleaned:
+        return "eligible"
+    if "eligible" in cleaned:
+        return "eligible"
+    return None
 
 
 def _topological_order(workflow: Workflow) -> list[WorkflowNode]:
@@ -108,6 +166,9 @@ def _run_hf_node(
     Returns (status, summary, model, total_tokens, latency_ms). On any
     failure (missing weights, load error, generation error) falls back to
     the mock summary with a 'warn' status — runs always finish.
+
+    `inputs` is the live state dict — it includes whatever previous nodes
+    put there (prospectus_text, clauses, etc.).
     """
     template = task.prompt_template if task else ""
     if not template:
@@ -184,20 +245,47 @@ def _run_ai_node(
     )
 
 
+def _decision_from_trace(
+    trace: list[TraceEntry], types: set[str]
+) -> tuple[str, float]:
+    """Read the regulatory decision off the AI classifier's response.
+
+    Tries mrel_classifier first, then instrument_classifier. Falls back
+    to rule-based defaults when no AI step ran or its output couldn't be
+    parsed.
+    """
+    for entry in trace:
+        if entry.node_type == "mrel_classifier" and entry.status != "warn":
+            label = _parse_eligibility_label(entry.summary)
+            if label == "eligible":
+                return "MREL-eligible", 0.90
+            if label == "not_eligible":
+                return "MREL-not-eligible", 0.90
+        if entry.node_type == "instrument_classifier" and entry.status != "warn":
+            cleaned = _strip_adapter_prefix(entry.summary).strip()
+            if cleaned:
+                return cleaned.split(".")[0][:80], 0.85
+
+    if "mrel_classifier" in types:
+        return "MREL-eligible", 0.87
+    if "instrument_classifier" in types:
+        return "Tier 2 capital instrument", 0.82
+    if "clause_extractor" in types:
+        return "3 clauses extracted", 0.91
+    return "Processed", 0.80
+
+
 def _build_output(
     workflow: Workflow,
     trace: list[TraceEntry],
     timestamp: datetime,
 ) -> RunOutput:
     types = {entry.node_type for entry in trace}
-    if "mrel_classifier" in types:
-        decision, confidence = "MREL-eligible", 0.87
-    elif "instrument_classifier" in types:
-        decision, confidence = "Tier 2 capital instrument", 0.82
-    elif "clause_extractor" in types:
-        decision, confidence = "3 clauses extracted", 0.91
-    else:
-        decision, confidence = "Processed", 0.80
+
+    # Prefer the AI classifier's parsed verdict as the regulatory decision.
+    # Fall back to the rule-based defaults only when no AI signal is
+    # available — so the trace and the headline don't disagree.
+    decision, confidence = _decision_from_trace(trace, types)
 
     sources = (
         ["page 12 §4.2", "page 18 §6.1"]
@@ -277,6 +365,11 @@ def execute_workflow(
         else:
             use_ollama = False
 
+    # State grows as nodes complete: prior outputs are made available to
+    # downstream nodes via prompt-template substitution.
+    state: dict[str, Any] = dict(inputs)
+    state.setdefault("document", "the input document")
+
     trace: list[TraceEntry] = []
     cursor = started
     for node in _topological_order(workflow):
@@ -284,6 +377,13 @@ def execute_workflow(
         adapter = adapters.get(node.adapter_id) if node.adapter_id else None
         adapter_id = adapter.id if adapter else None
         adapter_version = adapter.version if adapter else None
+
+        # Document-group nodes pre-populate state with the source text so AI
+        # nodes downstream can read it via {prospectus_text}.
+        if node.type == "prospectus_loader":
+            state.setdefault("prospectus_text", _SAMPLE_PROSPECTUS_TEXT)
+        elif node.type == "pdf_extractor":
+            state.setdefault("pdf_text", state.get("prospectus_text", ""))
 
         if (
             node.group == "ai"
@@ -295,7 +395,7 @@ def execute_workflow(
             # own base model.
             task = tasks.get(node.type)
             status, summary, model, tokens, latency_ms = _run_hf_node(
-                node, inputs, adapter, task
+                node, state, adapter, task
             )
             step_ms = latency_ms if latency_ms is not None else _NODE_STEP_MS
         elif use_ollama and node.group == "ai":
@@ -304,13 +404,13 @@ def execute_workflow(
             )
             task = tasks.get(node.type)
             status, summary, model, tokens, latency_ms = _run_ai_node(
-                node, inputs, base_model, task, prefix=prefix
+                node, state, base_model, task, prefix=prefix
             )
             if status_override is not None:
                 status = status_override
             step_ms = latency_ms if latency_ms is not None else _NODE_STEP_MS
         else:
-            status, summary = _mock_summary(node, inputs)
+            status, summary = _mock_summary(node, state)
             if node.adapter_id and adapter is None:
                 # Binding points at a deleted adapter — surface it.
                 status = "warn"
@@ -320,6 +420,14 @@ def execute_workflow(
                 )
             model, tokens, latency_ms = None, None, None
             step_ms = _NODE_STEP_MS
+
+        # Stash the AI response (or mock summary) into state under a
+        # well-known slot so downstream nodes can consume it. The summary
+        # carries the [adapter ...] prefix; strip it so prompt templates
+        # render with just the model output.
+        slot = _OUTPUT_SLOTS.get(node.type)
+        if slot:
+            state[slot] = _strip_adapter_prefix(summary)
 
         cursor = cursor + timedelta(milliseconds=step_ms)
         trace.append(

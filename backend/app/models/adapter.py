@@ -35,6 +35,7 @@ class Adapter(BaseModel):
     evaluation_metrics: EvaluationMetrics | None = PydanticField(
         default=None, alias="evaluationMetrics"
     )
+    weights_path: str | None = PydanticField(default=None, alias="weightsPath")
     created_at: datetime = PydanticField(alias="createdAt")
 
     model_config = {"populate_by_name": True}
@@ -51,6 +52,7 @@ class AdapterTable(SQLModel, table=True):
     status: str
     training_data_summary: str | None = None
     evaluation_metrics: dict | None = Field(default=None, sa_column=Column(JSON))
+    weights_path: str | None = None
     created_at: datetime
 
     def to_api(self) -> Adapter:
@@ -68,6 +70,7 @@ class AdapterTable(SQLModel, table=True):
             status=self.status,  # type: ignore[arg-type]
             trainingDataSummary=self.training_data_summary,
             evaluationMetrics=metrics,
+            weightsPath=self.weights_path,
             createdAt=self.created_at,
         )
 
@@ -87,5 +90,6 @@ class AdapterTable(SQLModel, table=True):
             status=adapter.status,
             training_data_summary=adapter.training_data_summary,
             evaluation_metrics=metrics,
+            weights_path=adapter.weights_path,
             created_at=adapter.created_at,
         )

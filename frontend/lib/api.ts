@@ -33,6 +33,7 @@ export type Adapter = {
   status: string;
   trainingDataSummary: string | null;
   evaluationMetrics: Record<string, unknown> | null;
+  weightsPath: string | null;
   createdAt: string;
 };
 
@@ -155,6 +156,12 @@ export type FineTuneMetrics = {
   history: FineTuneStep[];
 };
 
+export type TrainingPair = {
+  rowId: string | null;
+  prompt: string;
+  completion: string;
+};
+
 export type FineTuneRun = {
   id: string;
   datasetId: string;
@@ -166,6 +173,7 @@ export type FineTuneRun = {
   metrics: FineTuneMetrics | null;
   producedAdapterId: string | null;
   trace: TraceEntry[];
+  trainingPairs: TrainingPair[];
   startedAt: string;
   finishedAt: string | null;
 };

@@ -4,3 +4,15 @@ pydantic==2.10.4
 sqlmodel==0.0.22
 httpx==0.28.1
 python-multipart==0.0.20
+
+# Real LoRA training stack (real_finetune.py).
+# torch needs to be installed separately from the PyTorch CUDA index, e.g.
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# Pinning torch in this file would force CPU wheels for users who pip
+# install -r requirements.txt without the extra index.
+transformers==5.8.0
+peft==0.19.1
+bitsandbytes==0.49.2
+accelerate==1.13.0
+datasets==4.8.5
+sentencepiece==0.2.1

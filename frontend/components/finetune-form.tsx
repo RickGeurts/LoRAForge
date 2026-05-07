@@ -5,6 +5,15 @@ import { useRouter } from "next/navigation";
 
 import { api, type Dataset, type OllamaModel } from "@/lib/api";
 
+// Bases that the backend's real_finetune.py knows how to load via
+// HuggingFace + peft + bitsandbytes. Keep in sync with is_supported_base.
+const HF_TRAINING_BASES = [
+  {
+    id: "Qwen/Qwen2.5-3B-Instruct",
+    label: "Qwen/Qwen2.5-3B-Instruct (GPU QLoRA, ~6GB download)",
+  },
+];
+
 export function FineTuneForm({
   datasets,
   models,
@@ -96,27 +105,32 @@ export function FineTuneForm({
         </label>
         <label className="text-xs uppercase tracking-wide text-zinc-500">
           Base model
-          {models.length > 0 ? (
-            <select
-              value={baseModel}
-              onChange={(e) => setBaseModel(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm"
-            >
-              {models.map((m) => (
-                <option key={m.name} value={m.name}>
-                  {m.name} {m.stub ? "(stubbed)" : ""}
+          <select
+            value={baseModel}
+            onChange={(e) => setBaseModel(e.target.value)}
+            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm"
+          >
+            {models.length > 0 ? (
+              <optgroup label="Ollama (mock training)">
+                {models.map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.name} {m.stub ? "(stubbed)" : ""}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+            <optgroup label="HuggingFace (real GPU training)">
+              {HF_TRAINING_BASES.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label}
                 </option>
               ))}
-            </select>
-          ) : (
-            <input
-              required
-              value={baseModel}
-              onChange={(e) => setBaseModel(e.target.value)}
-              placeholder="llama3.1:8b"
-              className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm font-mono"
-            />
-          )}
+            </optgroup>
+          </select>
+          <span className="block mt-1 text-[11px] text-zinc-500 normal-case tracking-normal">
+            HF bases run real QLoRA on the GPU. First run downloads weights —
+            expect a few minutes.
+          </span>
         </label>
         <label className="text-xs uppercase tracking-wide text-zinc-500">
           Adapter name

@@ -160,6 +160,55 @@ export default async function FineTuneRunPage({
           </div>
         ) : null}
 
+        {run.trainingPairs && run.trainingPairs.length > 0 ? (
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden">
+            <header className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-baseline justify-between">
+              <h2 className="font-medium text-zinc-900 dark:text-zinc-50">
+                Materialised training pairs
+              </h2>
+              <span className="text-xs text-zinc-500">
+                {run.trainingPairs.length} pair
+                {run.trainingPairs.length === 1 ? "" : "s"}
+              </span>
+            </header>
+            <div className="px-5 py-3 text-[11px] text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
+              The (prompt, completion) pairs the executor would feed a real
+              LoRA trainer — built from the task&apos;s prompt template
+              rendered against each labelled row.
+            </div>
+            <ol className="divide-y divide-zinc-200 dark:divide-zinc-800">
+              {run.trainingPairs.map((pair, i) => (
+                <li
+                  key={`${pair.rowId ?? i}`}
+                  className="px-5 py-3 grid grid-cols-[3rem_1fr] gap-3"
+                >
+                  <span className="text-[11px] font-mono text-zinc-500">
+                    {pair.rowId ?? `#${i + 1}`}
+                  </span>
+                  <div className="min-w-0 space-y-2">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                        prompt
+                      </p>
+                      <p className="mt-0.5 text-sm font-mono text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap">
+                        {pair.prompt}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                        completion
+                      </p>
+                      <p className="mt-0.5 text-sm font-mono text-emerald-700 dark:text-emerald-300 whitespace-pre-wrap">
+                        → {pair.completion}
+                      </p>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+
         <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden">
           <header className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-baseline justify-between">
             <h2 className="font-medium text-zinc-900 dark:text-zinc-50">

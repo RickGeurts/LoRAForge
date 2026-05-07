@@ -28,8 +28,53 @@ from app.models.finetune import (
     FineTuneMetrics,
     FineTuneRun,
     FineTuneStep,
+    TrainingPair,
 )
 from app.models.run import TraceEntry
+from app.models.task import Task
+
+
+class _PermissiveInputs(dict):
+    """format_map dict that returns "" for missing keys.
+
+    Same shape as in services/executor.py — duplicated here to avoid an
+    import cycle and because the two callers are likely to drift over time.
+    """
+
+    def __missing__(self, key: str) -> str:  # type: ignore[override]
+        return ""
+
+
+def _materialise_pairs(
+    rows: list[dict[str, Any]], task: Task | None
+) -> list[TrainingPair]:
+    """Build (prompt, completion) pairs the way a real LoRA trainer would
+    consume them. Prompt is task.prompt_template rendered with the row;
+    completion is the row's label + rationale. Skips rows that are missing
+    the bare minimum to be a training example.
+    """
+    if task is None or not task.prompt_template:
+        return []
+    out: list[TrainingPair] = []
+    for row in rows:
+        format_inputs = _PermissiveInputs(row)
+        # Map common slots so existing prompt templates ({document}) keep
+        # working when the row's text lives under a different key.
+        format_inputs.setdefault("document", str(row.get("excerpt") or ""))
+        prompt = task.prompt_template.format_map(format_inputs)
+        label = row.get("label")
+        rationale = row.get("rationale") or ""
+        if not isinstance(label, str) or not label:
+            continue
+        completion = f"{label} — {rationale}".rstrip(" —")
+        out.append(
+            TrainingPair(
+                rowId=row.get("rowId") if isinstance(row.get("rowId"), str) else None,
+                prompt=prompt,
+                completion=completion,
+            )
+        )
+    return out
 
 _STAGE_BASE_MS = 60
 _VAL_SPLIT_RATIO = 0.1
@@ -81,6 +126,12 @@ _STAGES: list[_Stage] = [
         node_type="preprocess",
         label="Preprocess",
         summary_template="Tokenised {row_count} examples; train/val split {train_size}/{val_size}; max_seq_len 1024.",
+    ),
+    _Stage(
+        node_id="stage_materialise",
+        node_type="materialise_pairs",
+        label="Materialise prompts",
+        summary_template="{pair_summary}",
     ),
     _Stage(
         node_id="stage_base_model",
@@ -168,9 +219,15 @@ def execute_finetune(
     base_model: str,
     adapter_name: str,
     hyperparams: FineTuneHyperparams,
+    task: Task | None = None,
     started_at: datetime | None = None,
 ) -> tuple[FineTuneRun, Adapter]:
-    """Run the mocked fine-tune pipeline. Returns (run, produced_adapter)."""
+    """Run the mocked fine-tune pipeline. Returns (run, produced_adapter).
+
+    `task` is the Task this dataset trains for. When provided, the executor
+    materialises one (prompt, completion) pair per labelled row using the
+    task's prompt_template and stashes them on the run for the audit trail.
+    """
     started = started_at or datetime.now(timezone.utc)
     seed = "|".join(
         [
@@ -192,6 +249,27 @@ def execute_finetune(
         if label_dist
         else ""
     )
+    training_pairs = _materialise_pairs(dataset.rows, task)
+    if training_pairs:
+        pair_summary = (
+            f"Materialised {len(training_pairs)} (prompt, completion) pairs from "
+            f"task '{task.id if task else '?'}'.prompt_template + dataset rows."
+        )
+    elif task is None:
+        pair_summary = (
+            "No task resolved for this dataset's task type — skipped prompt "
+            "materialisation."
+        )
+    elif not task.prompt_template:
+        pair_summary = (
+            f"Task '{task.id}' has no prompt template — skipped prompt "
+            "materialisation. (Edit the task to add one.)"
+        )
+    else:
+        pair_summary = (
+            "No usable rows (need a non-empty `label` field) — skipped prompt "
+            "materialisation."
+        )
 
     context = {
         "dataset_name": dataset.name,
@@ -207,6 +285,7 @@ def execute_finetune(
         "accuracy": metrics.accuracy or 0.0,
         "f1": metrics.f1 or 0.0,
         "eval_loss": metrics.eval_loss or 0.0,
+        "pair_summary": pair_summary,
     }
 
     trace: list[TraceEntry] = []
@@ -264,6 +343,7 @@ def execute_finetune(
         metrics=metrics,
         producedAdapterId=adapter_id,
         trace=trace,
+        trainingPairs=training_pairs,
         startedAt=started,
         finishedAt=cursor,
     )

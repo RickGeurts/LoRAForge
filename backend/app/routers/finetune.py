@@ -5,7 +5,12 @@ from app.db import get_session
 from app.models.adapter import AdapterTable
 from app.models.dataset import DatasetTable
 from app.models.finetune import FineTuneRun, FineTuneRunCreate, FineTuneRunTable
+from app.models.task import TaskTable
 from app.services.finetune_executor import execute_finetune
+from app.services.real_finetune import (
+    execute_real_finetune,
+    is_supported_base,
+)
 
 router = APIRouter(prefix="/finetune", tags=["finetune"])
 
@@ -41,12 +46,26 @@ def create_finetune_run(
             status_code=404, detail=f"Dataset {payload.dataset_id} not found"
         )
 
-    run, adapter = execute_finetune(
-        dataset=dataset_row.to_api(),
-        base_model=payload.base_model,
-        adapter_name=payload.adapter_name,
-        hyperparams=payload.hyperparams,
-    )
+    dataset = dataset_row.to_api()
+    task_row = session.get(TaskTable, dataset.task_type)
+    task = task_row.to_api() if task_row is not None else None
+
+    if is_supported_base(payload.base_model):
+        run, adapter = execute_real_finetune(
+            dataset=dataset,
+            base_model=payload.base_model,
+            adapter_name=payload.adapter_name,
+            hyperparams=payload.hyperparams,
+            task=task,
+        )
+    else:
+        run, adapter = execute_finetune(
+            dataset=dataset,
+            base_model=payload.base_model,
+            adapter_name=payload.adapter_name,
+            hyperparams=payload.hyperparams,
+            task=task,
+        )
 
     session.add(AdapterTable.from_api(adapter))
     session.add(FineTuneRunTable.from_api(run))

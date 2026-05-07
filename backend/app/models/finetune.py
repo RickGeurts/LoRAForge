@@ -30,6 +30,19 @@ class FineTuneStep(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class TrainingPair(BaseModel):
+    """One materialised (prompt, completion) example as it would be fed to
+    a real LoRA trainer. We don't actually train, but we record these in
+    the run so the audit trail captures *what* the run was learning from.
+    """
+
+    row_id: str | None = PydanticField(default=None, alias="rowId")
+    prompt: str
+    completion: str
+
+    model_config = {"populate_by_name": True}
+
+
 class FineTuneMetrics(BaseModel):
     accuracy: float | None = None
     f1: float | None = None
@@ -53,6 +66,9 @@ class FineTuneRun(BaseModel):
         default=None, alias="producedAdapterId"
     )
     trace: list[TraceEntry] = PydanticField(default_factory=list)
+    training_pairs: list[TrainingPair] = PydanticField(
+        default_factory=list, alias="trainingPairs"
+    )
     started_at: datetime = PydanticField(alias="startedAt")
     finished_at: datetime | None = PydanticField(default=None, alias="finishedAt")
 
@@ -81,12 +97,14 @@ class FineTuneRunTable(SQLModel, table=True):
     metrics: dict | None = Field(default=None, sa_column=Column(JSON))
     produced_adapter_id: str | None = None
     trace: list = Field(default_factory=list, sa_column=Column(JSON))
+    training_pairs: list = Field(default_factory=list, sa_column=Column(JSON))
     started_at: datetime
     finished_at: datetime | None = None
 
     def to_api(self) -> FineTuneRun:
         metrics = FineTuneMetrics(**self.metrics) if self.metrics else None
         trace = [TraceEntry(**entry) for entry in (self.trace or [])]
+        pairs = [TrainingPair(**p) for p in (self.training_pairs or [])]
         return FineTuneRun(
             id=self.id,
             datasetId=self.dataset_id,
@@ -98,6 +116,7 @@ class FineTuneRunTable(SQLModel, table=True):
             metrics=metrics,
             producedAdapterId=self.produced_adapter_id,
             trace=trace,
+            trainingPairs=pairs,
             startedAt=self.started_at,
             finishedAt=self.finished_at,
         )
@@ -120,6 +139,9 @@ class FineTuneRunTable(SQLModel, table=True):
             metrics=metrics,
             produced_adapter_id=run.produced_adapter_id,
             trace=[entry.model_dump(by_alias=False, mode="json") for entry in run.trace],
+            training_pairs=[
+                p.model_dump(by_alias=False, mode="json") for p in run.training_pairs
+            ],
             started_at=run.started_at,
             finished_at=run.finished_at,
         )

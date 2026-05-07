@@ -20,6 +20,8 @@ engine = create_engine(
 _COLUMN_PATCHES: dict[str, dict[str, str]] = {
     "run": {"trace": "JSON DEFAULT '[]'"},
     "dataset": {"rows": "JSON DEFAULT '[]'"},
+    "finetune_run": {"training_pairs": "JSON DEFAULT '[]'"},
+    "adapter": {"weights_path": "TEXT DEFAULT NULL"},
 }
 
 

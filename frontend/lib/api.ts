@@ -168,6 +168,14 @@ export type FineTuneRunCreate = {
   hyperparams?: FineTuneHyperparams;
 };
 
+export type Template = {
+  id: string;
+  name: string;
+  description: string;
+  nodeCount: number;
+  edgeCount: number;
+};
+
 export type OllamaStatus = {
   reachable: boolean;
   baseUrl: string;
@@ -227,4 +235,8 @@ export const api = {
   finetuneRun: (id: string) => request<FineTuneRun>(`/finetune/${id}`),
   createFinetuneRun: (payload: FineTuneRunCreate) =>
     request<FineTuneRun>("/finetune", json(payload)),
+
+  templates: () => request<Template[]>("/templates"),
+  cloneTemplate: (id: string) =>
+    request<Workflow>(`/templates/${id}/clone`, { method: "POST" }),
 };

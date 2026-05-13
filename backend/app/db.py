@@ -53,6 +53,7 @@ def init_db() -> None:
     from app.models.adapter import AdapterTable  # noqa: F401
     from app.models.dataset import DatasetTable  # noqa: F401
     from app.models.finetune import FineTuneRunTable  # noqa: F401
+    from app.models.prospectus import ProspectusTable  # noqa: F401
     from app.models.run import RunTable  # noqa: F401
     from app.models.task import TaskTable  # noqa: F401
     from app.models.workflow import WorkflowTable  # noqa: F401

@@ -16,10 +16,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.models.adapter import Adapter
+from app.models.prospectus import Prospectus
 from app.models.run import RunOutput, TraceEntry, TraceStatus
 from app.models.task import Task
 from app.models.workflow import Workflow, WorkflowNode
-from app.services import ollama_client
+from app.services import clause_extractor, ollama_client
 
 _NODE_STEP_MS = 30
 _FALLBACK_ADAPTER_VERSION = "0.1.0"
@@ -39,9 +40,9 @@ _OUTPUT_SLOTS: dict[str, str] = {
     "validator": "validation_result",
 }
 
-# Seeded prospectus text the prospectus_loader stage drops into state,
-# so the demo workflow has real content to extract clauses from. Real
-# PDF parsing is out of MVP scope (CLAUDE.md non-goal).
+# Fallback prospectus text used only when no Prospectus registry is
+# provided (legacy callers, seed-time runs). Real callers pass a registry
+# and the prospectus_loader picks from it.
 _SAMPLE_PROSPECTUS_TEXT = (
     "PROSPECTUS — EUR 750,000,000 Subordinated Notes due 2031\n\n"
     "§3 Status: The Notes constitute direct, unsecured and subordinated "
@@ -54,6 +55,27 @@ _SAMPLE_PROSPECTUS_TEXT = (
     "§7 Governing Law: English law.\n\n"
     "§9 Issuer: ResolutionCo plc, the resolution entity of the Group."
 )
+
+
+def _resolve_prospectus(
+    node: WorkflowNode,
+    inputs: dict[str, Any],
+    prospectuses: dict[str, Prospectus],
+) -> Prospectus | None:
+    """Pick which prospectus the loader should serve.
+
+    Priority: workflow-node config > runtime inputs > first registered.
+    Returns None only when the registry is empty (legacy / seed-time).
+    """
+    chosen_id = (
+        (node.config or {}).get("prospectus_id")
+        or inputs.get("prospectus_id")
+    )
+    if chosen_id and chosen_id in prospectuses:
+        return prospectuses[chosen_id]
+    if prospectuses:
+        return next(iter(prospectuses.values()))
+    return None
 
 
 class _PermissiveInputs(dict):
@@ -136,8 +158,14 @@ def _topological_order(workflow: Workflow) -> list[WorkflowNode]:
 
 def _mock_summary(node: WorkflowNode, inputs: dict[str, Any]) -> tuple[TraceStatus, str]:
     doc = inputs.get("document") or "input document"
+    prospectus_name = inputs.get("prospectus_name")
+    prospectus_summary = (
+        f"Loaded '{prospectus_name}' ({doc})."
+        if prospectus_name
+        else f"Loaded prospectus '{doc}'."
+    )
     summaries: dict[str, tuple[TraceStatus, str]] = {
-        "prospectus_loader": ("ok", f"Loaded prospectus '{doc}'."),
+        "prospectus_loader": ("ok", prospectus_summary),
         "pdf_extractor": ("ok", "Extracted 24 pages of text."),
         "clause_extractor": (
             "ok",
@@ -279,6 +307,7 @@ def _build_output(
     workflow: Workflow,
     trace: list[TraceEntry],
     timestamp: datetime,
+    state: dict[str, Any],
 ) -> RunOutput:
     types = {entry.node_type for entry in trace}
 
@@ -287,11 +316,16 @@ def _build_output(
     # available — so the trace and the headline don't disagree.
     decision, confidence = _decision_from_trace(trace, types)
 
-    sources = (
-        ["page 12 §4.2", "page 18 §6.1"]
-        if "prospectus_loader" in types or "pdf_extractor" in types
-        else []
-    )
+    # Cite the actual clause sections the extractor identified. Falls back
+    # to legacy placeholders only when no extraction ran (e.g. a workflow
+    # without a clause_extractor node).
+    extracted_sources = state.get("clause_sources") or []
+    if extracted_sources:
+        sources = list(extracted_sources)
+    elif "prospectus_loader" in types or "pdf_extractor" in types:
+        sources = ["page 12 §4.2", "page 18 §6.1"]
+    else:
+        sources = []
 
     explanation = " ".join(
         entry.summary for entry in trace if entry.status != "warn"
@@ -324,6 +358,7 @@ def execute_workflow(
     use_ollama: bool | None = None,
     adapters: dict[str, Adapter] | None = None,
     tasks: dict[str, Task] | None = None,
+    prospectuses: dict[str, Prospectus] | None = None,
 ) -> tuple[str, RunOutput, list[TraceEntry], datetime]:
     """Run a workflow against inputs.
 
@@ -339,11 +374,17 @@ def execute_workflow(
     `tasks[node.type].prompt_template` to build the Ollama prompt. When
     omitted or the lookup misses, the node falls back to the mock summary.
 
+    `prospectuses` is the live Prospectus registry. The prospectus_loader
+    node picks one (node config > runtime input > first registered) and
+    drops its text into state["prospectus_text"]. When omitted, falls back
+    to the seeded sample text — legacy behaviour.
+
     Returns (status, output, trace, finished_at).
     """
     started = started_at or datetime.now(timezone.utc)
     adapters = adapters or {}
     tasks = tasks or {}
+    prospectuses = prospectuses or {}
     if use_ollama is None:
         status_info = ollama_client.get_status()
         use_ollama = bool(status_info.get("reachable"))
@@ -381,9 +422,48 @@ def execute_workflow(
         # Document-group nodes pre-populate state with the source text so AI
         # nodes downstream can read it via {prospectus_text}.
         if node.type == "prospectus_loader":
-            state.setdefault("prospectus_text", _SAMPLE_PROSPECTUS_TEXT)
+            chosen = _resolve_prospectus(node, state, prospectuses)
+            if chosen is not None:
+                state["prospectus_text"] = chosen.text
+                state["prospectus_id"] = chosen.id
+                state["prospectus_name"] = chosen.name
+                state["document"] = chosen.identifier or chosen.name
+            else:
+                state.setdefault("prospectus_text", _SAMPLE_PROSPECTUS_TEXT)
         elif node.type == "pdf_extractor":
             state.setdefault("pdf_text", state.get("prospectus_text", ""))
+
+        # Clause extraction is deterministic (regex + keyword classify) so
+        # the audit trail can cite which clause drove a verdict. Runs even
+        # though the node sits in the AI palette group.
+        if node.type == "clause_extractor":
+            clauses = clause_extractor.extract_clauses(
+                state.get("prospectus_text", "")
+            )
+            state["clauses_list"] = [c.as_dict() for c in clauses]
+            state["clauses"] = clause_extractor.render_for_prompt(clauses)
+            state["clause_sources"] = [c.source_anchor() for c in clauses]
+            status, summary = "ok", clause_extractor.summary_line(clauses)
+            step_ms = _NODE_STEP_MS
+            cursor = cursor + timedelta(milliseconds=step_ms)
+            trace.append(
+                TraceEntry(
+                    nodeId=node.id,
+                    nodeType=node.type,
+                    label=node.label,
+                    group=node.group,
+                    status=status,
+                    summary=summary,
+                    startedAt=node_started,
+                    finishedAt=cursor,
+                    model=None,
+                    totalTokens=None,
+                    latencyMs=None,
+                    adapterId=adapter_id,
+                    adapterVersion=adapter_version,
+                )
+            )
+            continue
 
         if (
             node.group == "ai"
@@ -448,7 +528,7 @@ def execute_workflow(
             )
         )
 
-    output = _build_output(workflow, trace, cursor)
+    output = _build_output(workflow, trace, cursor, state)
     final_status = (
         "needs_review"
         if any(entry.status == "warn" for entry in trace)

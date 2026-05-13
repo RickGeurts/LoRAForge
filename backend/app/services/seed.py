@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from app.models.adapter import Adapter, AdapterTable, EvaluationMetrics
 from app.models.dataset import Dataset, DatasetTable
+from app.models.prospectus import Prospectus, ProspectusTable
 from app.models.run import Run, RunTable
 from app.models.task import Task, TaskTable
 from app.models.workflow import Workflow, WorkflowTable
@@ -178,6 +179,80 @@ def _seed_adapters() -> list[Adapter]:
     ]
 
 
+_SEED_PROSPECTUSES: list[Prospectus] = [
+    Prospectus(
+        id="pr_tier2_2031",
+        name="ResolutionCo 2031 Subordinated Notes",
+        identifier="XS2031000001",
+        summary="EUR 750m Tier 2 subordinated notes, issued by the resolution entity.",
+        text=(
+            "PROSPECTUS — EUR 750,000,000 Subordinated Notes due 2031\n"
+            "Issuer: ResolutionCo plc (resolution entity of the Group). "
+            "ISIN: XS2031000001.\n\n"
+            "§3 Status: The Notes constitute direct, unsecured and subordinated "
+            "obligations of the Issuer ranking pari passu among themselves and "
+            "behind the claims of all senior creditors.\n\n"
+            "§4.1 Maturity: The Notes mature on 30 November 2031.\n\n"
+            "§4.3 Optional redemption: The Issuer may redeem the Notes in whole "
+            "following a Regulatory Event after the Reset Date, falling five "
+            "years after issuance.\n\n"
+            "§5.2 Ranking: In the event of resolution or winding-up, the Notes "
+            "rank junior to all Senior Preferred and Senior Non-Preferred "
+            "liabilities and senior only to Additional Tier 1 instruments.\n\n"
+            "§7 Governing Law: English law.\n\n"
+            "§9 Issuer: ResolutionCo plc, the resolution entity of the Group."
+        ),
+        source="seeded",
+        createdAt=_SEED_TS,
+    ),
+    Prospectus(
+        id="pr_senior_pref_2028",
+        name="ResolutionCo 2028 Senior Preferred Notes",
+        identifier="XS2028000002",
+        summary="EUR 1bn senior preferred notes — unsubordinated, ranks with general senior creditors.",
+        text=(
+            "PROSPECTUS — EUR 1,000,000,000 Senior Preferred Notes due 2028\n"
+            "Issuer: ResolutionCo plc. ISIN: XS2028000002.\n\n"
+            "§3 Status: The Notes constitute direct, unsecured and unsubordinated "
+            "obligations of the Issuer and rank pari passu with all other "
+            "unsubordinated obligations.\n\n"
+            "§4.1 Maturity: The Notes mature on 15 March 2028.\n\n"
+            "§4.3 Optional redemption: The Notes are not redeemable at the option "
+            "of the Issuer prior to maturity, save for tax events.\n\n"
+            "§5.2 Ranking: In the event of resolution, the Notes rank senior to "
+            "Senior Non-Preferred and Tier 2 liabilities and pari passu with "
+            "general senior creditors.\n\n"
+            "§7 Governing Law: English law.\n\n"
+            "§9 Issuer: ResolutionCo plc, the resolution entity of the Group."
+        ),
+        source="seeded",
+        createdAt=_SEED_TS,
+    ),
+    Prospectus(
+        id="pr_covered_2030",
+        name="ResolutionCo Mortgage Bank 2030 Covered Bonds",
+        identifier="XS2030000003",
+        summary="EUR 500m covered bonds — secured by mortgage cover pool, issued by funding subsidiary.",
+        text=(
+            "PROSPECTUS — EUR 500,000,000 Covered Bonds due 2030\n"
+            "Issuer: ResolutionCo Mortgage Bank S.A. ISIN: XS2030000003.\n\n"
+            "§3 Status: The Covered Bonds are secured obligations of the Issuer, "
+            "backed by a dynamic cover pool of residential mortgage loans pursuant "
+            "to applicable Covered Bond legislation.\n\n"
+            "§4.1 Maturity: The Covered Bonds mature on 1 June 2030, with a "
+            "12-month extendible maturity provision.\n\n"
+            "§5.2 Ranking: The Covered Bonds rank pari passu among themselves and "
+            "benefit from preferential claim on the cover pool assets.\n\n"
+            "§7 Governing Law: Luxembourg law.\n\n"
+            "§9 Issuer: ResolutionCo Mortgage Bank S.A., a wholly-owned subsidiary "
+            "specialised in mortgage funding (not the resolution entity)."
+        ),
+        source="seeded",
+        createdAt=_SEED_TS,
+    ),
+]
+
+
 def _mrel_clause_dataset() -> Dataset:
     rows = build_mrel_clause_rows()
     return Dataset(
@@ -268,12 +343,22 @@ def _reconcile_tasks(session: Session) -> None:
             session.add(existing)
 
 
+def _reconcile_prospectuses(session: Session) -> None:
+    # Insert any seeded prospectus that's missing. We don't refresh in place:
+    # if the user edited or pasted their own, leave it alone.
+    for prospectus in _SEED_PROSPECTUSES:
+        existing = session.get(ProspectusTable, prospectus.id)
+        if existing is None:
+            session.add(ProspectusTable.from_api(prospectus))
+
+
 def seed_if_empty(session: Session) -> None:
     _reconcile_tasks(session)
     if session.exec(select(AdapterTable)).first() is None:
         for adapter in _seed_adapters():
             session.add(AdapterTable.from_api(adapter))
     _reconcile_datasets(session)
+    _reconcile_prospectuses(session)
     if session.exec(select(WorkflowTable)).first() is None:
         for workflow in _seed_workflows():
             session.add(WorkflowTable.from_api(workflow))

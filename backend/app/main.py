@@ -10,6 +10,7 @@ from app.routers import (
     datasets,
     finetune,
     ollama,
+    prospectuses,
     runs,
     tasks,
     templates,
@@ -44,6 +45,7 @@ app.add_middleware(
 app.include_router(tasks.router)
 app.include_router(adapters.router)
 app.include_router(datasets.router)
+app.include_router(prospectuses.router)
 app.include_router(workflows.router)
 app.include_router(templates.router)
 app.include_router(runs.router)

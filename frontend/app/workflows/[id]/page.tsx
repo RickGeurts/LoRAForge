@@ -15,11 +15,13 @@ export default async function WorkflowDetailPage({
   let workflow: Awaited<ReturnType<typeof api.workflow>>;
   let adapters: Awaited<ReturnType<typeof api.adapters>> = [];
   let aiTasks: Awaited<ReturnType<typeof api.tasks>> = [];
+  let prospectuses: Awaited<ReturnType<typeof api.prospectuses>> = [];
   try {
-    [workflow, adapters, aiTasks] = await Promise.all([
+    [workflow, adapters, aiTasks, prospectuses] = await Promise.all([
       api.workflow(id),
       api.adapters().catch(() => []),
       api.tasks("ai").catch(() => []),
+      api.prospectuses().catch(() => []),
     ]);
   } catch (e) {
     if (e instanceof Error && /404/.test(e.message)) notFound();
@@ -56,6 +58,7 @@ export default async function WorkflowDetailPage({
         workflow={workflow}
         adapters={adapters}
         aiTasks={aiTasks}
+        prospectuses={prospectuses}
       />
     </div>
   );

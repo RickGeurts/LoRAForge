@@ -29,6 +29,7 @@ import {
   api,
   type Adapter,
   type NodeGroup,
+  type Prospectus,
   type Task,
   type Workflow as ApiWorkflow,
 } from "@/lib/api";
@@ -246,14 +247,21 @@ export function WorkflowEditor({
   workflow,
   adapters,
   aiTasks,
+  prospectuses,
 }: {
   workflow: ApiWorkflow;
   adapters: Adapter[];
   aiTasks: Task[];
+  prospectuses: Prospectus[];
 }) {
   return (
     <ReactFlowProvider>
-      <EditorInner workflow={workflow} adapters={adapters} aiTasks={aiTasks} />
+      <EditorInner
+        workflow={workflow}
+        adapters={adapters}
+        aiTasks={aiTasks}
+        prospectuses={prospectuses}
+      />
     </ReactFlowProvider>
   );
 }
@@ -262,10 +270,12 @@ function EditorInner({
   workflow,
   adapters,
   aiTasks,
+  prospectuses,
 }: {
   workflow: ApiWorkflow;
   adapters: Adapter[];
   aiTasks: Task[];
+  prospectuses: Prospectus[];
 }) {
   const initial = useMemo(
     () => workflowToFlow(workflow, adapters),
@@ -400,6 +410,24 @@ function EditorInner({
     [setNodes, adapters],
   );
 
+  const setNodeConfigValue = useCallback(
+    (nodeId: string, key: string, value: string | null) => {
+      setNodes((ns) =>
+        ns.map((n) => {
+          if (n.id !== nodeId) return n;
+          const next = { ...n.data.config };
+          if (value === null || value === "") {
+            delete next[key];
+          } else {
+            next[key] = value;
+          }
+          return { ...n, data: { ...n.data, config: next } };
+        }),
+      );
+    },
+    [setNodes],
+  );
+
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
 
   return (
@@ -485,7 +513,9 @@ function EditorInner({
       <Inspector
         node={selectedNode}
         adapters={adapters}
+        prospectuses={prospectuses}
         onAdapterChange={setNodeAdapter}
+        onConfigChange={setNodeConfigValue}
       />
     </div>
   );
@@ -494,11 +524,15 @@ function EditorInner({
 function Inspector({
   node,
   adapters,
+  prospectuses,
   onAdapterChange,
+  onConfigChange,
 }: {
   node: FlowNode | null;
   adapters: Adapter[];
+  prospectuses: Prospectus[];
   onAdapterChange: (nodeId: string, adapterId: string | null) => void;
+  onConfigChange: (nodeId: string, key: string, value: string | null) => void;
 }) {
   if (!node) {
     return (
@@ -509,10 +543,13 @@ function Inspector({
   }
 
   const isAi = node.data.group === "ai";
+  const isProspectusLoader = node.data.nodeType === "prospectus_loader";
   // Adapters in the registry that match this node's task type — keeps the
   // dropdown short and reflects the "constrained workflow" principle.
   const compatible = adapters.filter((a) => a.taskType === node.data.nodeType);
   const incompatible = adapters.filter((a) => a.taskType !== node.data.nodeType);
+  const selectedProspectusId =
+    (node.data.config["prospectus_id"] as string | undefined) ?? "";
 
   return (
     <aside className="w-64 shrink-0 border-l border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 p-4 overflow-y-auto">
@@ -525,6 +562,37 @@ function Inspector({
       <p className="mt-0.5 text-[11px] font-mono text-zinc-500">
         {node.data.nodeType} · {node.data.group}
       </p>
+
+      {isProspectusLoader ? (
+        <div className="mt-4">
+          <label className="text-[11px] uppercase tracking-wide text-zinc-500">
+            Prospectus
+          </label>
+          <select
+            value={selectedProspectusId}
+            onChange={(e) =>
+              onConfigChange(node.id, "prospectus_id", e.target.value || null)
+            }
+            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1.5 text-xs"
+          >
+            <option value="">(first registered)</option>
+            {prospectuses.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.identifier ? ` · ${p.identifier}` : ""}
+              </option>
+            ))}
+          </select>
+          <p className="mt-3 text-[11px] text-zinc-500 leading-relaxed">
+            The selected prospectus&apos;s text is loaded into the run state.
+            Manage the library on the{" "}
+            <a href="/prospectuses" className="underline">
+              Prospectuses
+            </a>{" "}
+            page.
+          </p>
+        </div>
+      ) : null}
 
       {isAi ? (
         <div className="mt-4">
@@ -573,12 +641,12 @@ function Inspector({
             available model and the trace records a warning.
           </p>
         </div>
-      ) : (
+      ) : !isProspectusLoader ? (
         <p className="mt-4 text-[11px] text-zinc-500 leading-relaxed">
           Adapter binding only applies to AI-group nodes. This node runs
           deterministic logic.
         </p>
-      )}
+      ) : null}
     </aside>
   );
 }

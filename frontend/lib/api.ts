@@ -112,6 +112,25 @@ export type RunCreate = {
   inputs?: Record<string, unknown>;
 };
 
+export type ProspectusSource = "seeded" | "pasted";
+
+export type Prospectus = {
+  id: string;
+  name: string;
+  identifier: string | null;
+  summary: string | null;
+  text: string;
+  source: ProspectusSource;
+  createdAt: string;
+};
+
+export type ProspectusCreate = {
+  name: string;
+  identifier?: string | null;
+  summary?: string | null;
+  text: string;
+};
+
 export type DatasetSource = "file" | "text" | "external" | "mock";
 
 export type Dataset = {
@@ -271,6 +290,13 @@ export const api = {
     request<Dataset>("/datasets", json(payload)),
   deleteDataset: (id: string) =>
     requestVoid(`/datasets/${id}`, { method: "DELETE" }),
+
+  prospectuses: () => request<Prospectus[]>("/prospectuses"),
+  prospectus: (id: string) => request<Prospectus>(`/prospectuses/${id}`),
+  createProspectus: (payload: ProspectusCreate) =>
+    request<Prospectus>("/prospectuses", json(payload)),
+  deleteProspectus: (id: string) =>
+    requestVoid(`/prospectuses/${id}`, { method: "DELETE" }),
 
   finetuneRuns: () => request<FineTuneRun[]>("/finetune"),
   finetuneRun: (id: string) => request<FineTuneRun>(`/finetune/${id}`),

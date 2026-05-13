@@ -151,9 +151,10 @@ def execute_real_finetune(
 ) -> tuple[FineTuneRun, Adapter]:
     started = started_at or datetime.now(timezone.utc)
 
-    from app.services.finetune_executor import _materialise_pairs
+    from app.services.finetune_executor import materialise
 
-    pairs = _materialise_pairs(dataset.rows, task)
+    mat = materialise(dataset, task)
+    pairs = mat.pairs
     if not pairs:
         raise ValueError(
             "Real training requires at least one labelled row and a task "
@@ -223,13 +224,17 @@ def execute_real_finetune(
             1 for p in val_pairs if _extract_label(p.completion) == _NEGATIVE_LABEL
         ),
     }
+    skipped_note = ""
+    if mat.skipped:
+        skipped_note = f" Skipped {mat.skipped} row(s): {mat.summary()}."
     _emit(
         "stage_pairs",
         "Materialise prompts",
         f"Built {len(pairs)} pairs; train/val split {len(train_pairs)}/"
         f"{len(val_pairs)}; val labels = "
         f"{val_label_counts[_POSITIVE_LABEL]} eligible, "
-        f"{val_label_counts[_NEGATIVE_LABEL]} not_eligible.",
+        f"{val_label_counts[_NEGATIVE_LABEL]} not_eligible."
+        + skipped_note,
     )
 
     tokenizer = AutoTokenizer.from_pretrained(base_model)

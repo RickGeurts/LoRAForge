@@ -20,8 +20,13 @@ export function DatasetForm({ tasks }: { tasks: Task[] }) {
   const [sourceType, setSourceType] = useState<DatasetSource>("mock");
   const [summary, setSummary] = useState("");
   const [rowCount, setRowCount] = useState<number>(0);
+  const [labelColumn, setLabelColumn] = useState("label");
+  const [textColumn, setTextColumn] = useState("excerpt");
+  const [rationaleColumn, setRationaleColumn] = useState("rationale");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const selectedTask = tasks.find((t) => t.id === taskType) ?? null;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,6 +43,9 @@ export function DatasetForm({ tasks }: { tasks: Task[] }) {
         sourceType,
         summary: summary.trim(),
         rowCount,
+        labelColumn: labelColumn.trim() || "label",
+        textColumn: textColumn.trim() || "excerpt",
+        rationaleColumn: rationaleColumn.trim() || null,
       });
       setName("");
       setSummary("");
@@ -135,6 +143,56 @@ export function DatasetForm({ tasks }: { tasks: Task[] }) {
             className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm"
           />
         </label>
+      </div>
+
+      <div className="rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 p-3 space-y-2">
+        <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+          Column mapping
+        </p>
+        <p className="text-[11px] text-zinc-500 normal-case tracking-normal leading-relaxed">
+          Which fields of each row hold the label, the source text, and the
+          rationale. Used by fine-tune to materialise (prompt, completion)
+          pairs.
+          {selectedTask && selectedTask.kind === "classifier" ? (
+            <>
+              {" "}
+              Classifier rows must carry a label from the task&apos;s set:{" "}
+              <span className="font-mono">
+                {selectedTask.labels.join(", ") || "(none defined)"}
+              </span>
+              .
+            </>
+          ) : null}
+        </p>
+        <div className="grid grid-cols-3 gap-3">
+          <label className="text-[11px] uppercase tracking-wide text-zinc-500">
+            Label column
+            <input
+              value={labelColumn}
+              onChange={(e) => setLabelColumn(e.target.value)}
+              placeholder="label"
+              className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs font-mono"
+            />
+          </label>
+          <label className="text-[11px] uppercase tracking-wide text-zinc-500">
+            Text column
+            <input
+              value={textColumn}
+              onChange={(e) => setTextColumn(e.target.value)}
+              placeholder="excerpt"
+              className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs font-mono"
+            />
+          </label>
+          <label className="text-[11px] uppercase tracking-wide text-zinc-500">
+            Rationale column
+            <input
+              value={rationaleColumn}
+              onChange={(e) => setRationaleColumn(e.target.value)}
+              placeholder="rationale (optional)"
+              className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs font-mono"
+            />
+          </label>
+        </div>
       </div>
       {error ? (
         <p className="text-sm text-red-700 dark:text-red-300">{error}</p>

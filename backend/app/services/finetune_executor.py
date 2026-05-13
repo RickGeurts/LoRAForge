@@ -45,27 +45,78 @@ class _PermissiveInputs(dict):
         return ""
 
 
-def _materialise_pairs(
-    rows: list[dict[str, Any]], task: Task | None
-) -> list[TrainingPair]:
-    """Build (prompt, completion) pairs the way a real LoRA trainer would
-    consume them. Prompt is task.prompt_template rendered with the row;
-    completion is the row's label + rationale. Skips rows that are missing
-    the bare minimum to be a training example.
+@dataclass
+class MaterialisationResult:
+    pairs: list[TrainingPair]
+    total_rows: int
+    skipped_missing_label: int = 0
+    skipped_unknown_label: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.skipped_unknown_label is None:
+            self.skipped_unknown_label = []
+
+    @property
+    def skipped(self) -> int:
+        return self.skipped_missing_label + len(self.skipped_unknown_label)
+
+    def summary(self) -> str:
+        if self.total_rows == 0:
+            return "no rows in dataset"
+        parts = [f"{len(self.pairs)}/{self.total_rows} pairs accepted"]
+        if self.skipped_missing_label:
+            parts.append(f"{self.skipped_missing_label} missing label")
+        if self.skipped_unknown_label:
+            offenders = ", ".join(sorted(set(self.skipped_unknown_label))[:3])
+            parts.append(
+                f"{len(self.skipped_unknown_label)} unknown label "
+                f"(e.g. {offenders})"
+            )
+        return "; ".join(parts)
+
+
+def materialise(
+    dataset: Dataset, task: Task | None
+) -> MaterialisationResult:
+    """Build (prompt, completion) pairs from a dataset against a task.
+
+    Column-mapping comes from the dataset (label_column, text_column,
+    rationale_column). For classifier tasks with a non-empty label set,
+    rows whose label isn't in task.labels are skipped and reported.
     """
+    rows = dataset.rows
     if task is None or not task.prompt_template:
-        return []
+        return MaterialisationResult(pairs=[], total_rows=len(rows))
+
+    label_col = dataset.label_column or "label"
+    text_col = dataset.text_column or "excerpt"
+    rationale_col = dataset.rationale_column
+    allowed = (
+        {l.strip() for l in task.labels if l and l.strip()}
+        if task.kind == "classifier" and task.labels
+        else None
+    )
+
     out: list[TrainingPair] = []
+    skipped_missing = 0
+    skipped_unknown: list[str] = []
     for row in rows:
         format_inputs = _PermissiveInputs(row)
-        # Map common slots so existing prompt templates ({document}) keep
-        # working when the row's text lives under a different key.
-        format_inputs.setdefault("document", str(row.get("excerpt") or ""))
+        format_inputs.setdefault("document", str(row.get(text_col) or ""))
         prompt = task.prompt_template.format_map(format_inputs)
-        label = row.get("label")
-        rationale = row.get("rationale") or ""
-        if not isinstance(label, str) or not label:
+        label_raw = row.get(label_col)
+        if not isinstance(label_raw, str) or not label_raw.strip():
+            skipped_missing += 1
             continue
+        label = label_raw.strip()
+        if allowed is not None and label not in allowed:
+            skipped_unknown.append(label)
+            continue
+        rationale = ""
+        if rationale_col:
+            rationale_raw = row.get(rationale_col)
+            if isinstance(rationale_raw, str):
+                rationale = rationale_raw
         completion = f"{label} — {rationale}".rstrip(" —")
         out.append(
             TrainingPair(
@@ -74,7 +125,31 @@ def _materialise_pairs(
                 completion=completion,
             )
         )
-    return out
+    return MaterialisationResult(
+        pairs=out,
+        total_rows=len(rows),
+        skipped_missing_label=skipped_missing,
+        skipped_unknown_label=skipped_unknown,
+    )
+
+
+# Backwards-compatible thin wrapper. The mock execution path here still
+# calls this; real_finetune.py now uses materialise() directly.
+def _materialise_pairs(
+    rows: list[dict[str, Any]], task: Task | None
+) -> list[TrainingPair]:
+    """Legacy shape — uses the default column convention. Avoid in new code."""
+    shim = Dataset(
+        id="__shim",
+        name="",
+        taskType=task.id if task else "other",
+        sourceType="mock",
+        summary="",
+        rowCount=len(rows),
+        rows=rows,
+        createdAt=datetime.now(timezone.utc),
+    )
+    return materialise(shim, task).pairs
 
 _STAGE_BASE_MS = 60
 _VAL_SPLIT_RATIO = 0.1
@@ -249,11 +324,14 @@ def execute_finetune(
         if label_dist
         else ""
     )
-    training_pairs = _materialise_pairs(dataset.rows, task)
+    mat = materialise(dataset, task)
+    training_pairs = mat.pairs
     if training_pairs:
         pair_summary = (
-            f"Materialised {len(training_pairs)} (prompt, completion) pairs from "
-            f"task '{task.id if task else '?'}'.prompt_template + dataset rows."
+            f"Materialised {len(training_pairs)} pairs from task "
+            f"'{task.id if task else '?'}'.prompt_template + dataset rows ("
+            + mat.summary()
+            + ")."
         )
     elif task is None:
         pair_summary = (
@@ -267,8 +345,8 @@ def execute_finetune(
         )
     else:
         pair_summary = (
-            "No usable rows (need a non-empty `label` field) — skipped prompt "
-            "materialisation."
+            f"No usable rows ({mat.summary()}) — check dataset column mapping "
+            "and that label values match the task's declared labels."
         )
 
     context = {

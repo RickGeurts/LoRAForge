@@ -33,6 +33,11 @@ _COLUMN_PATCHES: dict[str, dict[str, str]] = {
         "kind": "TEXT DEFAULT 'generator'",
         "labels": "JSON DEFAULT '[]'",
     },
+    "dataset": {
+        "label_column": "TEXT DEFAULT 'label'",
+        "text_column": "TEXT DEFAULT 'excerpt'",
+        "rationale_column": "TEXT DEFAULT 'rationale'",
+    },
 }
 
 

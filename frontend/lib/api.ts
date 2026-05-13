@@ -154,6 +154,9 @@ export type Dataset = {
   summary: string;
   rowCount: number;
   rows: Array<Record<string, unknown>>;
+  labelColumn: string;
+  textColumn: string;
+  rationaleColumn: string | null;
   createdAt: string;
 };
 
@@ -163,6 +166,9 @@ export type DatasetCreate = {
   sourceType: DatasetSource;
   summary: string;
   rowCount: number;
+  labelColumn?: string;
+  textColumn?: string;
+  rationaleColumn?: string | null;
 };
 
 export type FineTuneStatus = "queued" | "running" | "completed" | "failed";

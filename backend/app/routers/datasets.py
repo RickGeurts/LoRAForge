@@ -21,6 +21,11 @@ class DatasetCreate(BaseModel):
     source_type: DatasetSource = PydanticField(alias="sourceType")
     summary: str
     row_count: int = PydanticField(alias="rowCount", ge=0)
+    label_column: str = PydanticField(default="label", alias="labelColumn")
+    text_column: str = PydanticField(default="excerpt", alias="textColumn")
+    rationale_column: str | None = PydanticField(
+        default="rationale", alias="rationaleColumn"
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -57,6 +62,9 @@ def create_dataset(
         sourceType=payload.source_type,
         summary=payload.summary,
         rowCount=payload.row_count,
+        labelColumn=payload.label_column,
+        textColumn=payload.text_column,
+        rationaleColumn=payload.rationale_column,
         createdAt=datetime.now(timezone.utc),
     )
     row = DatasetTable.from_api(dataset)

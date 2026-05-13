@@ -19,6 +19,13 @@ class Dataset(BaseModel):
     summary: str
     row_count: int = PydanticField(alias="rowCount")
     rows: list[dict[str, Any]] = PydanticField(default_factory=list)
+    # Column-mapping into the row dicts. Default to the historical
+    # convention so older datasets keep working without an explicit setting.
+    label_column: str = PydanticField(default="label", alias="labelColumn")
+    text_column: str = PydanticField(default="excerpt", alias="textColumn")
+    rationale_column: str | None = PydanticField(
+        default="rationale", alias="rationaleColumn"
+    )
     created_at: datetime = PydanticField(alias="createdAt")
 
     model_config = {"populate_by_name": True}
@@ -34,6 +41,9 @@ class DatasetTable(SQLModel, table=True):
     summary: str
     row_count: int
     rows: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    label_column: str = "label"
+    text_column: str = "excerpt"
+    rationale_column: str | None = "rationale"
     created_at: datetime
 
     def to_api(self) -> Dataset:
@@ -45,6 +55,9 @@ class DatasetTable(SQLModel, table=True):
             summary=self.summary,
             rowCount=self.row_count,
             rows=list(self.rows or []),
+            labelColumn=self.label_column or "label",
+            textColumn=self.text_column or "excerpt",
+            rationaleColumn=self.rationale_column,
             createdAt=self.created_at,
         )
 
@@ -58,5 +71,8 @@ class DatasetTable(SQLModel, table=True):
             summary=dataset.summary,
             row_count=dataset.row_count,
             rows=list(dataset.rows or []),
+            label_column=dataset.label_column,
+            text_column=dataset.text_column,
+            rationale_column=dataset.rationale_column,
             created_at=dataset.created_at,
         )

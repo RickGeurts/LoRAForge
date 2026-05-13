@@ -60,7 +60,7 @@ export default async function DatasetDetailPage({
   return (
     <div className="flex flex-col">
       <PageHeader title={dataset.name} description={dataset.summary} />
-      <div className="px-8 pt-3 pb-2 flex items-center justify-between">
+      <div className="px-8 pt-3 pb-2 flex items-center justify-between gap-3 flex-wrap">
         <Link
           href="/datasets"
           className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-50"
@@ -71,6 +71,25 @@ export default async function DatasetDetailPage({
           <span className="font-mono">{dataset.taskType}</span> · {dataset.sourceType}{" "}
           · {dataset.rowCount.toLocaleString()} rows
         </p>
+      </div>
+
+      <div className="px-8 pb-2 text-[11px] text-zinc-500">
+        Column mapping:{" "}
+        <code className="font-mono text-zinc-700 dark:text-zinc-300">
+          label={dataset.labelColumn}
+        </code>{" "}
+        ·{" "}
+        <code className="font-mono text-zinc-700 dark:text-zinc-300">
+          text={dataset.textColumn}
+        </code>
+        {dataset.rationaleColumn ? (
+          <>
+            {" "}·{" "}
+            <code className="font-mono text-zinc-700 dark:text-zinc-300">
+              rationale={dataset.rationaleColumn}
+            </code>
+          </>
+        ) : null}
       </div>
 
       <section className="px-8 py-4">

@@ -309,12 +309,66 @@ def _mrel_clause_dataset() -> Dataset:
     )
 
 
+_DEFAULT_VALIDATOR_RULES: list[dict] = [
+    {
+        "id": "subordinated-present",
+        "name": "Subordinated clause present",
+        "type": "regex_matches",
+        "target": "clauses",
+        "pattern": r"\bsubordinated\b",
+        "case_sensitive": False,
+        "reason_on_fail": "Document does not mention subordination.",
+    },
+    {
+        "id": "not-unsubordinated",
+        "name": "Not explicitly unsubordinated",
+        "type": "text_does_not_contain",
+        "target": "clauses",
+        "value": "unsubordinated",
+        "case_sensitive": False,
+        "reason_on_fail": "Document explicitly says the instrument is unsubordinated.",
+    },
+    {
+        "id": "no-covered-bond",
+        "name": "Not a covered bond",
+        "type": "text_does_not_contain",
+        "target": "clauses",
+        "value": "covered bond",
+        "case_sensitive": False,
+        "reason_on_fail": "Document indicates the instrument is a covered (secured) bond.",
+    },
+    {
+        "id": "resolution-entity-issuer",
+        "name": "Issuer is the resolution entity",
+        "type": "text_contains",
+        "target": "clauses",
+        "value": "resolution entity",
+        "case_sensitive": False,
+        "reason_on_fail": "Issuer not identified as the resolution entity.",
+    },
+    {
+        "id": "issuer-not-disclaimed",
+        "name": "Issuer not disclaimed as non-resolution-entity",
+        "type": "text_does_not_contain",
+        "target": "clauses",
+        "value": "not the resolution entity",
+        "case_sensitive": False,
+        "reason_on_fail": "Issuer explicitly disclaimed as NOT the resolution entity.",
+    },
+]
+
+
 def _seed_workflows() -> list[Workflow]:
     wf = mrel_eligibility(workflow_id="wf_mrel_template", ts=_SEED_TS)
     docs_path = str(_SAMPLE_DOCS_DIR)
     for node in wf.nodes:
         if node.type == "document_handler":
             node.config = {**node.config, "path": docs_path}
+        elif node.type == "validator":
+            node.config = {
+                **node.config,
+                "rules": [dict(r) for r in _DEFAULT_VALIDATOR_RULES],
+            }
     return [wf]
 
 
@@ -389,6 +443,8 @@ def _migrate_legacy_workflow_nodes(session: Session) -> None:
     1. Rename prospectus_loader → document_handler (with sample path).
     2. Strip the now-defunct `filename` key from document_handler config
        (Document Handler loads the whole folder).
+    3. Populate Validator nodes that have no rule list with the default
+       MREL-style rules so existing runs don't suddenly degrade.
     """
     docs_path = str(_SAMPLE_DOCS_DIR)
     for wf_row in session.exec(select(WorkflowTable)).all():
@@ -420,6 +476,17 @@ def _migrate_legacy_workflow_nodes(session: Session) -> None:
                         k: v
                         for k, v in (n.get("config") or {}).items()
                         if k != "filename"
+                    },
+                })
+            elif n.get("type") == "validator" and not (
+                n.get("config") or {}
+            ).get("rules"):
+                rewrote = True
+                new_nodes.append({
+                    **n,
+                    "config": {
+                        **(n.get("config") or {}),
+                        "rules": [dict(r) for r in _DEFAULT_VALIDATOR_RULES],
                     },
                 })
             else:

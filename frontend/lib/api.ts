@@ -116,6 +116,34 @@ export type DocumentEntry = { name: string; size: number };
 export type DocumentList = { path: string; files: DocumentEntry[] };
 export type DocumentContent = { path: string; filename: string; text: string };
 
+export type RulePrimitiveParam =
+  | "target"
+  | "value"
+  | "values"
+  | "pattern"
+  | "bound"
+  | "case_sensitive";
+
+export type RulePrimitive = {
+  type: string;
+  name: string;
+  description: string;
+  params: RulePrimitiveParam[];
+};
+
+export type RuleInstance = {
+  id?: string;
+  name?: string;
+  type: string;
+  target?: string;
+  value?: string;
+  values?: string;
+  pattern?: string;
+  bound?: number | string;
+  case_sensitive?: boolean;
+  reason_on_fail?: string;
+};
+
 export type DatasetSource = "file" | "text" | "external" | "mock";
 
 export type Dataset = {
@@ -284,6 +312,8 @@ export const api = {
     request<DocumentContent>(
       `/documents/read?path=${encodeURIComponent(path)}&filename=${encodeURIComponent(filename)}`,
     ),
+
+  rulePrimitives: () => request<RulePrimitive[]>("/rules/primitives"),
 
   finetuneRuns: () => request<FineTuneRun[]>("/finetune"),
   finetuneRun: (id: string) => request<FineTuneRun>(`/finetune/${id}`),

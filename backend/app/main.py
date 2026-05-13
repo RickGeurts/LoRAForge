@@ -11,6 +11,7 @@ from app.routers import (
     documents,
     finetune,
     ollama,
+    rules,
     runs,
     tasks,
     templates,
@@ -51,6 +52,7 @@ app.include_router(templates.router)
 app.include_router(runs.router)
 app.include_router(finetune.router)
 app.include_router(ollama.router)
+app.include_router(rules.router)
 
 
 @app.get("/")

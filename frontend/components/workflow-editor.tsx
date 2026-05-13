@@ -30,6 +30,9 @@ import {
   type Adapter,
   type DocumentEntry,
   type NodeGroup,
+  type RuleInstance,
+  type RulePrimitive,
+  type RulePrimitiveParam,
   type Task,
   type Workflow as ApiWorkflow,
 } from "@/lib/api";
@@ -252,14 +255,21 @@ export function WorkflowEditor({
   workflow,
   adapters,
   aiTasks,
+  primitives,
 }: {
   workflow: ApiWorkflow;
   adapters: Adapter[];
   aiTasks: Task[];
+  primitives: RulePrimitive[];
 }) {
   return (
     <ReactFlowProvider>
-      <EditorInner workflow={workflow} adapters={adapters} aiTasks={aiTasks} />
+      <EditorInner
+        workflow={workflow}
+        adapters={adapters}
+        aiTasks={aiTasks}
+        primitives={primitives}
+      />
     </ReactFlowProvider>
   );
 }
@@ -268,10 +278,12 @@ function EditorInner({
   workflow,
   adapters,
   aiTasks,
+  primitives,
 }: {
   workflow: ApiWorkflow;
   adapters: Adapter[];
   aiTasks: Task[];
+  primitives: RulePrimitive[];
 }) {
   const initial = useMemo(
     () => workflowToFlow(workflow, adapters),
@@ -422,6 +434,19 @@ function EditorInner({
     [setNodes],
   );
 
+  const setNodeConfigField = useCallback(
+    (nodeId: string, key: string, value: unknown) => {
+      setNodes((ns) =>
+        ns.map((n) => {
+          if (n.id !== nodeId) return n;
+          const next = { ...n.data.config, [key]: value };
+          return { ...n, data: { ...n.data, config: next } };
+        }),
+      );
+    },
+    [setNodes],
+  );
+
   const editingNode = nodes.find((n) => n.id === editingNodeId) ?? null;
 
   return (
@@ -508,9 +533,11 @@ function EditorInner({
         <NodeConfigDrawer
           node={editingNode}
           adapters={adapters}
+          primitives={primitives}
           onClose={() => setEditingNodeId(null)}
           onAdapterChange={setNodeAdapter}
           onConfigChange={setNodeConfigValue}
+          onConfigField={setNodeConfigField}
         />
       ) : null}
     </div>
@@ -537,15 +564,19 @@ function PaletteCard({ item }: { item: PaletteItem }) {
 function NodeConfigDrawer({
   node,
   adapters,
+  primitives,
   onClose,
   onAdapterChange,
   onConfigChange,
+  onConfigField,
 }: {
   node: FlowNode;
   adapters: Adapter[];
+  primitives: RulePrimitive[];
   onClose: () => void;
   onAdapterChange: (nodeId: string, adapterId: string | null) => void;
   onConfigChange: (nodeId: string, key: string, value: string | null) => void;
+  onConfigField: (nodeId: string, key: string, value: unknown) => void;
 }) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -569,7 +600,7 @@ function NodeConfigDrawer({
         onClick={onClose}
         aria-label="Close"
       />
-      <aside className="w-[28rem] max-w-full bg-white dark:bg-zinc-950 shadow-2xl border-l border-zinc-200 dark:border-zinc-800 flex flex-col">
+      <aside className="w-[36rem] max-w-full bg-white dark:bg-zinc-950 shadow-2xl border-l border-zinc-200 dark:border-zinc-800 flex flex-col">
         <header className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-start justify-between">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-zinc-500">
@@ -596,7 +627,13 @@ function NodeConfigDrawer({
           {isDocumentHandler ? (
             <DocumentHandlerConfig node={node} onConfigChange={onConfigChange} />
           ) : null}
-          {isValidator ? <ValidatorInfo /> : null}
+          {isValidator ? (
+            <ValidatorConfig
+              node={node}
+              primitives={primitives}
+              onConfigField={onConfigField}
+            />
+          ) : null}
           {isConfidenceFilter ? (
             <ConfidenceFilterConfig node={node} onConfigChange={onConfigChange} />
           ) : null}
@@ -735,29 +772,266 @@ function DocumentHandlerConfig({
   );
 }
 
-function ValidatorInfo() {
+function ValidatorConfig({
+  node,
+  primitives,
+  onConfigField,
+}: {
+  node: FlowNode;
+  primitives: RulePrimitive[];
+  onConfigField: (nodeId: string, key: string, value: unknown) => void;
+}) {
+  const rules = useMemo<RuleInstance[]>(() => {
+    const stored = node.data.config.rules;
+    return Array.isArray(stored) ? (stored as RuleInstance[]) : [];
+  }, [node.data.config.rules]);
+
+  const primitivesByType = useMemo(
+    () => new Map(primitives.map((p) => [p.type, p])),
+    [primitives],
+  );
+
+  const commit = (next: RuleInstance[]) => {
+    onConfigField(node.id, "rules", next);
+  };
+
+  const addRule = () => {
+    const id = `rule_${Date.now().toString(36)}_${Math.random()
+      .toString(36)
+      .slice(2, 5)}`;
+    const defaultType = primitives[0]?.type ?? "text_contains";
+    commit([
+      ...rules,
+      { id, type: defaultType, target: "", value: "", name: "" },
+    ]);
+  };
+
+  const updateRule = (i: number, patch: Partial<RuleInstance>) => {
+    commit(rules.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  };
+
+  const removeRule = (i: number) => commit(rules.filter((_, idx) => idx !== i));
+
+  const moveRule = (i: number, delta: number) => {
+    const target = i + delta;
+    if (target < 0 || target >= rules.length) return;
+    const next = [...rules];
+    const [item] = next.splice(i, 1);
+    next.splice(target, 0, item);
+    commit(next);
+  };
+
   return (
-    <section className="space-y-2">
-      <h3 className="text-xs uppercase tracking-wide text-zinc-500">
-        MREL eligibility rules
-      </h3>
-      <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">
-        The Validator runs four deterministic rules from BRRD/SRMR Article 45b
-        against the extracted clauses:
-      </p>
-      <ul className="text-xs text-zinc-700 dark:text-zinc-300 list-disc pl-5 space-y-1">
-        <li>Subordinated instrument (not senior preferred)</li>
-        <li>Unsecured (not covered / secured)</li>
-        <li>Effective maturity ≥ 1 year (perpetual counts)</li>
-        <li>Issued by the resolution entity</li>
-      </ul>
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs uppercase tracking-wide text-zinc-500">
+          Rules ({rules.length})
+        </h3>
+        <button
+          type="button"
+          onClick={addRule}
+          disabled={primitives.length === 0}
+          className="text-xs px-2 py-1 rounded-md border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+        >
+          + Add rule
+        </button>
+      </div>
+
+      {rules.length === 0 ? (
+        <p className="text-[11px] text-zinc-500 italic">
+          No rules yet. Add one to start validating run state.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rules.map((rule, i) => (
+            <RuleCard
+              key={rule.id ?? i}
+              rule={rule}
+              index={i}
+              total={rules.length}
+              primitive={primitivesByType.get(rule.type) ?? null}
+              primitives={primitives}
+              onChange={(patch) => updateRule(i, patch)}
+              onDelete={() => removeRule(i)}
+              onMove={(delta) => moveRule(i, delta)}
+            />
+          ))}
+        </div>
+      )}
+
       <p className="text-[11px] text-zinc-500 leading-relaxed">
-        Each rule cites the §/file that drove its verdict. The combined
-        pass-rate becomes the run&apos;s confidence and overrides the AI
-        classifier&apos;s verdict — that&apos;s the regulator-friendly audit
-        story.
+        Rules are generic primitives. <code>target</code> is the run-state
+        field to check (e.g. <code>clauses</code>, <code>document_text</code>,
+        <code>clauses_list</code>). The Validator&apos;s pass-rate becomes the
+        run&apos;s confidence.
       </p>
     </section>
+  );
+}
+
+function RuleCard({
+  rule,
+  index,
+  total,
+  primitive,
+  primitives,
+  onChange,
+  onDelete,
+  onMove,
+}: {
+  rule: RuleInstance;
+  index: number;
+  total: number;
+  primitive: RulePrimitive | null;
+  primitives: RulePrimitive[];
+  onChange: (patch: Partial<RuleInstance>) => void;
+  onDelete: () => void;
+  onMove: (delta: number) => void;
+}) {
+  const params = new Set<RulePrimitiveParam>(primitive?.params ?? []);
+
+  return (
+    <div className="rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <input
+          value={rule.name ?? ""}
+          onChange={(e) => onChange({ name: e.target.value })}
+          placeholder={primitive?.name ?? "Rule name"}
+          className="flex-1 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-sm font-medium"
+        />
+        <div className="flex items-center gap-1 text-zinc-500">
+          <button
+            type="button"
+            onClick={() => onMove(-1)}
+            disabled={index === 0}
+            className="px-1 py-0.5 hover:text-zinc-900 dark:hover:text-zinc-50 disabled:opacity-30"
+            aria-label="Move up"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            onClick={() => onMove(1)}
+            disabled={index === total - 1}
+            className="px-1 py-0.5 hover:text-zinc-900 dark:hover:text-zinc-50 disabled:opacity-30"
+            aria-label="Move down"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="px-1 py-0.5 hover:text-red-700 dark:hover:text-red-400"
+            aria-label="Delete"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+        Primitive
+        <select
+          value={rule.type}
+          onChange={(e) => onChange({ type: e.target.value })}
+          className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs"
+        >
+          {primitives.map((p) => (
+            <option key={p.type} value={p.type}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      {primitive ? (
+        <p className="text-[11px] text-zinc-500 leading-relaxed">
+          {primitive.description}
+        </p>
+      ) : (
+        <p className="text-[11px] text-red-700 dark:text-red-300">
+          Unknown primitive: <code>{rule.type}</code>
+        </p>
+      )}
+
+      {params.has("target") ? (
+        <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+          Target field
+          <input
+            value={rule.target ?? ""}
+            onChange={(e) => onChange({ target: e.target.value })}
+            placeholder="state key, e.g. clauses"
+            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs font-mono"
+          />
+        </label>
+      ) : null}
+
+      {params.has("value") ? (
+        <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+          Value
+          <input
+            value={rule.value ?? ""}
+            onChange={(e) => onChange({ value: e.target.value })}
+            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs"
+          />
+        </label>
+      ) : null}
+
+      {params.has("values") ? (
+        <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+          Values (comma-separated)
+          <input
+            value={rule.values ?? ""}
+            onChange={(e) => onChange({ values: e.target.value })}
+            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs"
+          />
+        </label>
+      ) : null}
+
+      {params.has("pattern") ? (
+        <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+          Pattern (regex)
+          <input
+            value={rule.pattern ?? ""}
+            onChange={(e) => onChange({ pattern: e.target.value })}
+            placeholder="\\bword\\b"
+            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs font-mono"
+          />
+        </label>
+      ) : null}
+
+      {params.has("bound") ? (
+        <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+          Bound
+          <input
+            type="number"
+            value={rule.bound ?? ""}
+            onChange={(e) => onChange({ bound: e.target.value })}
+            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs tabular-nums"
+          />
+        </label>
+      ) : null}
+
+      {params.has("case_sensitive") ? (
+        <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-zinc-500">
+          <input
+            type="checkbox"
+            checked={Boolean(rule.case_sensitive)}
+            onChange={(e) => onChange({ case_sensitive: e.target.checked })}
+          />
+          Case-sensitive
+        </label>
+      ) : null}
+
+      <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+        Failure reason (optional)
+        <input
+          value={rule.reason_on_fail ?? ""}
+          onChange={(e) => onChange({ reason_on_fail: e.target.value })}
+          placeholder="Shown in trace when the rule fails"
+          className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1 text-xs"
+        />
+      </label>
+    </div>
   );
 }
 

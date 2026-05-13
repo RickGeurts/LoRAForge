@@ -23,7 +23,7 @@ from app.services import (
     clause_extractor,
     document_loader,
     ollama_client,
-    regulatory_rules,
+    rule_engine,
 )
 
 _NODE_STEP_MS = 30
@@ -283,11 +283,10 @@ def _decision_from_trace(
     if isinstance(validation, dict) and validation.get("rules"):
         score = float(validation.get("score", 0.0))
         failed = int(validation.get("failed", 0))
-        if failed == 0 and score >= 0.99:
-            return "MREL-eligible", score
-        if failed == 0:
-            return "MREL-eligible (with uncertainty)", score
-        return "MREL-not-eligible", score
+        errored = int(validation.get("errored", 0))
+        if failed == 0 and errored == 0:
+            return "Validation passed", score
+        return "Validation failed", score
 
     for entry in trace:
         if entry.node_type == "mrel_classifier" and entry.status != "warn":
@@ -522,24 +521,28 @@ def execute_workflow(
             )
             continue
 
-        # Validator runs the deterministic MREL rule set on the extracted
-        # clauses. Result is structured so the audit trail can cite the
-        # exact §/file that drove each pass/fail.
+        # Validator runs each configured rule against the run state. Rules
+        # are generic primitives (text_contains, regex_matches, etc.) that
+        # the workflow builder composes per node — no hardcoded ruleset.
         if node.type == "validator":
-            clauses_list = state.get("clauses_list") or []
-            results = regulatory_rules.evaluate_mrel_rules(clauses_list)
-            validation_score = regulatory_rules.score(results)
+            configured = (node.config or {}).get("rules") or []
+            rule_list = list(configured) if isinstance(configured, list) else []
+            results = rule_engine.evaluate(rule_list, state)
+            validation_score = rule_engine.score(results)
             state["validation_result"] = {
                 "rules": [r.as_dict() for r in results],
                 "score": validation_score,
                 "passed": sum(1 for r in results if r.status == "pass"),
                 "failed": sum(1 for r in results if r.status == "fail"),
-                "uncertain": sum(1 for r in results if r.status == "uncertain"),
+                "errored": sum(1 for r in results if r.status == "error"),
             }
             state["validation_score"] = validation_score
-            any_failed = any(r.status == "fail" for r in results)
+            any_failed = any(r.status != "pass" for r in results)
             status = "warn" if any_failed else "ok"
-            summary = regulatory_rules.summary_line(results)
+            if not rule_list:
+                status, summary = "warn", "No rules configured on this Validator."
+            else:
+                summary = rule_engine.summary_line(results)
             step_ms = _NODE_STEP_MS
             cursor = cursor + timedelta(milliseconds=step_ms)
             trace.append(

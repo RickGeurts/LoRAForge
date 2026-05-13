@@ -230,6 +230,8 @@ export type Template = {
   edgeCount: number;
 };
 
+export type TaskKind = "classifier" | "generator";
+
 export type Task = {
   id: string;
   name: string;
@@ -238,6 +240,8 @@ export type Task = {
   expectedOutput: string;
   nodeGroup: NodeGroup;
   defaultBaseModel: string;
+  kind: TaskKind;
+  labels: string[];
   builtin: boolean;
   createdAt: string;
   updatedAt: string;
@@ -337,6 +341,8 @@ export const api = {
     expectedOutput: string;
     nodeGroup: NodeGroup;
     defaultBaseModel: string;
+    kind: TaskKind;
+    labels: string[];
   }) => request<Task>("/tasks", json(payload)),
   replaceTask: (
     id: string,
@@ -347,6 +353,8 @@ export const api = {
       expectedOutput: string;
       nodeGroup: NodeGroup;
       defaultBaseModel: string;
+      kind: TaskKind;
+      labels: string[];
     },
   ) => request<Task>(`/tasks/${id}`, { ...json(payload), method: "PUT" }),
   deleteTask: (id: string) => requestVoid(`/tasks/${id}`, { method: "DELETE" }),

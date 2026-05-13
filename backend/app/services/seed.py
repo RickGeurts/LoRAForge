@@ -191,6 +191,8 @@ def _seed_tasks() -> list[Task]:
             ),
             nodeGroup="ai",
             defaultBaseModel="llama3.1:8b",
+            kind="classifier",
+            labels=["eligible", "not_eligible"],
             builtin=True,
             createdAt=_SEED_TS,
             updatedAt=_SEED_TS,
@@ -206,6 +208,14 @@ def _seed_tasks() -> list[Task]:
             expectedOutput="Instrument type label and 1-sentence rationale.",
             nodeGroup="ai",
             defaultBaseModel="llama3.1:8b",
+            kind="classifier",
+            labels=[
+                "Tier 2",
+                "AT1",
+                "Senior Preferred",
+                "Senior Non-Preferred",
+                "Covered Bond",
+            ],
             builtin=True,
             createdAt=_SEED_TS,
             updatedAt=_SEED_TS,
@@ -223,6 +233,8 @@ def _seed_tasks() -> list[Task]:
             ),
             nodeGroup="ai",
             defaultBaseModel="llama3.1:8b",
+            kind="generator",
+            labels=[],
             builtin=True,
             createdAt=_SEED_TS,
             updatedAt=_SEED_TS,
@@ -430,9 +442,21 @@ def _reconcile_tasks(session: Session) -> None:
         if existing is None:
             session.add(TaskTable.from_api(task))
             continue
+        dirty = False
         upgrade_from = _UPGRADABLE_PROMPTS.get(task.id, set())
         if existing.prompt_template in upgrade_from:
             existing.prompt_template = task.prompt_template
+            dirty = True
+        # kind + labels are identity for the task — built-in tasks always
+        # reflect the seed. User-defined tasks (builtin=False) are skipped.
+        if existing.builtin and (
+            existing.kind != task.kind
+            or list(existing.labels or []) != list(task.labels or [])
+        ):
+            existing.kind = task.kind
+            existing.labels = list(task.labels or [])
+            dirty = True
+        if dirty:
             existing.updated_at = _SEED_TS
             session.add(existing)
 

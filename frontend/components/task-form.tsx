@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { api, type NodeGroup, type Task } from "@/lib/api";
+import { api, type NodeGroup, type Task, type TaskKind } from "@/lib/api";
 
 type Mode = { kind: "create" } | { kind: "edit"; task: Task };
 
@@ -29,6 +29,10 @@ export function TaskForm({ mode }: { mode: Mode }) {
   const [expectedOutput, setExpectedOutput] = useState(
     initial?.expectedOutput ?? "",
   );
+  const [kind, setKind] = useState<TaskKind>(initial?.kind ?? "generator");
+  const [labelsText, setLabelsText] = useState(
+    (initial?.labels ?? []).join(", "),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +41,13 @@ export function TaskForm({ mode }: { mode: Mode }) {
     setSubmitting(true);
     setError(null);
     try {
+      const labels =
+        kind === "classifier"
+          ? labelsText
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : [];
       const payload = {
         name: name.trim(),
         description: description.trim(),
@@ -44,6 +55,8 @@ export function TaskForm({ mode }: { mode: Mode }) {
         expectedOutput,
         nodeGroup,
         defaultBaseModel: defaultBaseModel.trim(),
+        kind,
+        labels,
       };
       const task =
         mode.kind === "create"
@@ -140,6 +153,37 @@ export function TaskForm({ mode }: { mode: Mode }) {
             className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm font-mono"
           />
         </label>
+
+        <label className="text-xs uppercase tracking-wide text-zinc-500">
+          Kind
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value as TaskKind)}
+            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm"
+          >
+            <option value="generator">Generator (free-form text)</option>
+            <option value="classifier">Classifier (fixed label set)</option>
+          </select>
+          <span className="block mt-1 text-[11px] text-zinc-500 normal-case tracking-normal">
+            Classifiers can be probed by the AI Confidence Filter for a real
+            softmax probability over their label set.
+          </span>
+        </label>
+
+        {kind === "classifier" ? (
+          <label className="text-xs uppercase tracking-wide text-zinc-500">
+            Labels (comma-separated)
+            <input
+              value={labelsText}
+              onChange={(e) => setLabelsText(e.target.value)}
+              placeholder="eligible, not_eligible"
+              className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm font-mono"
+            />
+            <span className="block mt-1 text-[11px] text-zinc-500 normal-case tracking-normal">
+              Closed verdict set. The AI Confidence Filter softmaxes over these.
+            </span>
+          </label>
+        ) : null}
 
         <label className="text-xs uppercase tracking-wide text-zinc-500 col-span-2">
           Prompt template

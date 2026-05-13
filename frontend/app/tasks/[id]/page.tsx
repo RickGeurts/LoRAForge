@@ -44,6 +44,15 @@ export default async function TaskDetailPage({
           >
             {task.nodeGroup}
           </span>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full ${
+              task.kind === "classifier"
+                ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300"
+                : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+            }`}
+          >
+            {task.kind}
+          </span>
           {task.builtin ? (
             <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
               builtin
@@ -107,6 +116,27 @@ export default async function TaskDetailPage({
               {new Date(task.updatedAt).toLocaleString()}
             </dd>
           </div>
+          {task.kind === "classifier" ? (
+            <div className="col-span-2">
+              <dt className="text-xs uppercase tracking-wide text-zinc-500">
+                Labels
+              </dt>
+              <dd className="flex flex-wrap gap-1.5 mt-1">
+                {task.labels.length === 0 ? (
+                  <span className="text-zinc-500 italic">none</span>
+                ) : (
+                  task.labels.map((l) => (
+                    <span
+                      key={l}
+                      className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-300 dark:border-indigo-900 font-mono"
+                    >
+                      {l}
+                    </span>
+                  ))
+                )}
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </section>
     </div>

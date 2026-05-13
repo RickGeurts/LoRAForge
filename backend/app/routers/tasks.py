@@ -9,7 +9,7 @@ from pydantic import Field as PydanticField
 from sqlmodel import Session, select
 
 from app.db import get_session
-from app.models.task import Task, TaskTable
+from app.models.task import Task, TaskKind, TaskTable
 from app.models.workflow import NodeGroup
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -29,6 +29,8 @@ class TaskCreate(BaseModel):
     default_base_model: str = PydanticField(
         default="llama3.1:8b", alias="defaultBaseModel"
     )
+    kind: TaskKind = "generator"
+    labels: list[str] = PydanticField(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
@@ -44,6 +46,8 @@ class TaskUpdate(BaseModel):
     default_base_model: str = PydanticField(
         default="llama3.1:8b", alias="defaultBaseModel"
     )
+    kind: TaskKind = "generator"
+    labels: list[str] = PydanticField(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
@@ -109,6 +113,8 @@ def create_task(
         expectedOutput=payload.expected_output,
         nodeGroup=payload.node_group,
         defaultBaseModel=payload.default_base_model,
+        kind=payload.kind,
+        labels=list(payload.labels or []),
         builtin=False,
         createdAt=now,
         updatedAt=now,
@@ -138,6 +144,8 @@ def replace_task(
     row.expected_output = payload.expected_output
     row.node_group = payload.node_group
     row.default_base_model = payload.default_base_model
+    row.kind = payload.kind
+    row.labels = list(payload.labels or [])
     row.updated_at = datetime.now(timezone.utc)
     session.add(row)
     session.commit()

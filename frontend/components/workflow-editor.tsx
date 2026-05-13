@@ -216,6 +216,33 @@ function flowToWorkflow(
   };
 }
 
+function findUpstreamClassifierTask(
+  nodeId: string,
+  nodes: FlowNode[],
+  edges: Edge[],
+  aiTasks: Task[],
+): Task | null {
+  const taskById = new Map(aiTasks.map((t) => [t.id, t]));
+  const visited = new Set<string>();
+  const queue: string[] = [nodeId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const e of edges) {
+      if (e.target !== current) continue;
+      const source = nodes.find((n) => n.id === e.source);
+      if (!source) continue;
+      if (source.data.group === "ai") {
+        const task = taskById.get(source.data.nodeType);
+        if (task && task.kind === "classifier") return task;
+      }
+      queue.push(source.id);
+    }
+  }
+  return null;
+}
+
 function hasCycle(nodes: FlowNode[], edges: Edge[]): boolean {
   const adj = new Map<string, string[]>();
   for (const n of nodes) adj.set(n.id, []);
@@ -449,6 +476,12 @@ function EditorInner({
   );
 
   const editingNode = nodes.find((n) => n.id === editingNodeId) ?? null;
+  const upstreamClassifier = useMemo(() => {
+    if (!editingNode || editingNode.data.nodeType !== "ai_confidence_filter") {
+      return null;
+    }
+    return findUpstreamClassifierTask(editingNode.id, nodes, edges, aiTasks);
+  }, [editingNode, nodes, edges, aiTasks]);
 
   return (
     <div className="flex h-[calc(100vh-12rem)] min-h-[480px] border-t border-zinc-200 dark:border-zinc-800">
@@ -535,6 +568,7 @@ function EditorInner({
           node={editingNode}
           adapters={adapters}
           primitives={primitives}
+          upstreamClassifier={upstreamClassifier}
           onClose={() => setEditingNodeId(null)}
           onAdapterChange={setNodeAdapter}
           onConfigChange={setNodeConfigValue}
@@ -566,6 +600,7 @@ function NodeConfigDrawer({
   node,
   adapters,
   primitives,
+  upstreamClassifier,
   onClose,
   onAdapterChange,
   onConfigChange,
@@ -574,6 +609,7 @@ function NodeConfigDrawer({
   node: FlowNode;
   adapters: Adapter[];
   primitives: RulePrimitive[];
+  upstreamClassifier: Task | null;
   onClose: () => void;
   onAdapterChange: (nodeId: string, adapterId: string | null) => void;
   onConfigChange: (nodeId: string, key: string, value: string | null) => void;
@@ -646,6 +682,7 @@ function NodeConfigDrawer({
           {isAiConfidenceFilter ? (
             <AiConfidenceFilterConfig
               node={node}
+              upstreamClassifier={upstreamClassifier}
               onConfigChange={onConfigChange}
               onConfigField={onConfigField}
             />
@@ -1119,18 +1156,24 @@ function RulesThresholdConfig({
 
 function AiConfidenceFilterConfig({
   node,
+  upstreamClassifier,
   onConfigChange,
   onConfigField,
 }: {
   node: FlowNode;
+  upstreamClassifier: Task | null;
   onConfigChange: (nodeId: string, key: string, value: string | null) => void;
   onConfigField: (nodeId: string, key: string, value: unknown) => void;
 }) {
   const threshold = _thresholdValue(node.data.config.threshold, 0.7);
   const rawCandidates = node.data.config.candidates;
-  const candidatesText = Array.isArray(rawCandidates)
-    ? rawCandidates.join(", ")
-    : "eligible, not_eligible";
+  const currentCandidates = Array.isArray(rawCandidates)
+    ? (rawCandidates as string[])
+    : [];
+  const candidatesText =
+    currentCandidates.length > 0
+      ? currentCandidates.join(", ")
+      : "eligible, not_eligible";
 
   const commitThreshold = (v: number) => {
     const clamped = Math.max(0, Math.min(1, v));
@@ -1143,6 +1186,20 @@ function AiConfidenceFilterConfig({
       .filter(Boolean);
     onConfigField(node.id, "candidates", list);
   };
+  const applyUpstreamLabels = () => {
+    if (!upstreamClassifier) return;
+    onConfigField(
+      node.id,
+      "candidates",
+      [...upstreamClassifier.labels],
+    );
+  };
+
+  const labelsMatchUpstream =
+    upstreamClassifier !== null &&
+    currentCandidates.length > 0 &&
+    currentCandidates.length === upstreamClassifier.labels.length &&
+    currentCandidates.every((c, i) => c === upstreamClassifier.labels[i]);
 
   return (
     <section className="space-y-3">
@@ -1150,9 +1207,41 @@ function AiConfidenceFilterConfig({
         AI confidence threshold
       </h3>
       <ThresholdSlider value={threshold} onChange={commitThreshold} />
+
+      {upstreamClassifier ? (
+        <div className="rounded-md border border-indigo-200 dark:border-indigo-900 bg-indigo-50 dark:bg-indigo-950/30 p-3 space-y-2">
+          <p className="text-[11px] text-indigo-900 dark:text-indigo-200">
+            Upstream classifier:{" "}
+            <span className="font-mono">{upstreamClassifier.id}</span> with{" "}
+            {upstreamClassifier.labels.length} label
+            {upstreamClassifier.labels.length === 1 ? "" : "s"} (
+            {upstreamClassifier.labels.join(", ") || "—"}).
+          </p>
+          {!labelsMatchUpstream && upstreamClassifier.labels.length > 0 ? (
+            <button
+              type="button"
+              onClick={applyUpstreamLabels}
+              className="text-xs px-2 py-1 rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
+            >
+              Use upstream labels
+            </button>
+          ) : (
+            <p className="text-[11px] text-indigo-700 dark:text-indigo-300">
+              Candidates match the classifier&apos;s labels.
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-[11px] text-zinc-500 leading-relaxed">
+          No classifier task found upstream. AI confidence still works — fill in
+          the candidate verdicts manually below.
+        </p>
+      )}
+
       <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
         Candidate verdicts (comma-separated)
         <input
+          key={candidatesText}
           defaultValue={candidatesText}
           onBlur={(e) => commitCandidates(e.target.value)}
           placeholder="eligible, not_eligible"
@@ -1163,9 +1252,8 @@ function AiConfidenceFilterConfig({
         Probes Ollama with a one-token constrained prompt and captures{" "}
         <code>top_logprobs</code> for the listed verdicts. Confidence is the
         softmax over those candidates&apos; logprobs — an actual model
-        probability, not a self-report. Below the threshold the run is
-        flagged <code>needs_review</code>. Requires an Ollama build that
-        exposes logprobs (recent 0.x — falls back to a warning otherwise).
+        probability, not a self-report. Below the threshold the run is flagged{" "}
+        <code>needs_review</code>.
       </p>
     </section>
   );

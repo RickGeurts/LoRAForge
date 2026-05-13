@@ -29,6 +29,10 @@ _COLUMN_PATCHES: dict[str, dict[str, str]] = {
         "error": "TEXT DEFAULT NULL",
     },
     "adapter": {"weights_path": "TEXT DEFAULT NULL"},
+    "task": {
+        "kind": "TEXT DEFAULT 'generator'",
+        "labels": "JSON DEFAULT '[]'",
+    },
 }
 
 

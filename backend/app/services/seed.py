@@ -73,6 +73,36 @@ _SAMPLE_DOCUMENTS: dict[str, str] = {
 }
 
 
+_SAMPLE_DOCX_NAME = "at1_perpetual.docx"
+_SAMPLE_DOCX_PARAGRAPHS = (
+    "PROSPECTUS — EUR 500,000,000 AT1 Capital Notes",
+    "Issuer: ResolutionCo plc. ISIN: XS_TEST_AT1.",
+    "§3 Status: The Notes constitute deeply subordinated obligations of the "
+    "Issuer ranking junior to Tier 2 instruments.",
+    "§4.1 Maturity: The Notes are perpetual and have no fixed maturity date.",
+    "§4.3 Optional redemption: The Issuer may redeem the Notes on any Reset "
+    "Date subject to regulatory approval.",
+    "§7 Governing Law: English law.",
+    "§9 Issuer: ResolutionCo plc, the resolution entity of the Group.",
+)
+
+
+def _write_sample_docx(target: "Path") -> None:
+    """Best-effort: write a .docx fixture so the parser path is demoable.
+
+    Imported lazily — if python-docx isn't installed we skip silently
+    rather than crash at boot. The text fixtures still work.
+    """
+    try:
+        from docx import Document
+    except ImportError:
+        return
+    doc = Document()
+    for paragraph in _SAMPLE_DOCX_PARAGRAPHS:
+        doc.add_paragraph(paragraph)
+    doc.save(str(target))
+
+
 def _write_sample_documents() -> None:
     """Create the sample-documents directory on disk and populate it.
 
@@ -83,6 +113,9 @@ def _write_sample_documents() -> None:
         target = _SAMPLE_DOCS_DIR / filename
         if not target.exists():
             target.write_text(content, encoding="utf-8")
+    docx_target = _SAMPLE_DOCS_DIR / _SAMPLE_DOCX_NAME
+    if not docx_target.exists():
+        _write_sample_docx(docx_target)
 
 _SEED_TS = datetime(2026, 5, 5, tzinfo=timezone.utc)
 _SUPERSEDED_DATASET_IDS = ("ds_mrel_corpus", "ds_clauses_v1")

@@ -75,7 +75,16 @@ def read_file(path: str, filename: str) -> str:
     return target.read_text(encoding="utf-8", errors="replace")
 
 
-def pick_default_filename(path: str) -> str | None:
-    """First file in the directory, used when no node config is set."""
-    files = list_files(path)
-    return files[0].name if files else None
+@dataclass(frozen=True)
+class LoadedDocument:
+    filename: str
+    text: str
+
+
+def read_all_files(path: str) -> list[LoadedDocument]:
+    """Read every supported file in the directory in name order."""
+    entries = list_files(path)
+    out: list[LoadedDocument] = []
+    for entry in entries:
+        out.append(LoadedDocument(filename=entry.name, text=read_file(path, entry.name)))
+    return out

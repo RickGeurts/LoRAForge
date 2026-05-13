@@ -135,9 +135,9 @@ function LoraForgeNode({ data }: NodeProps<FlowNode>) {
       ) : data.group === "ai" ? (
         <p className="mt-1 text-[10px] text-zinc-400 italic">no adapter bound</p>
       ) : null}
-      {data.nodeType === "document_handler" && data.config.filename ? (
+      {data.nodeType === "document_handler" && data.config.path ? (
         <p className="mt-1 text-[10px] font-mono text-zinc-700 dark:text-zinc-300 bg-white/60 dark:bg-zinc-900/60 rounded px-1 py-0.5 truncate max-w-[180px]">
-          📄 {String(data.config.filename)}
+          📁 {String(data.config.path).split(/[\\/]/).slice(-2).join("/")}
         </p>
       ) : null}
       <Handle type="source" position={Position.Right} className="!bg-zinc-400" />
@@ -629,7 +629,6 @@ function DocumentHandlerConfig({
   onConfigChange: (nodeId: string, key: string, value: string | null) => void;
 }) {
   const path = (node.data.config.path as string | undefined) ?? "";
-  const filename = (node.data.config.filename as string | undefined) ?? "";
   const [pathDraft, setPathDraft] = useState(path);
   const [files, setFiles] = useState<DocumentEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -637,40 +636,39 @@ function DocumentHandlerConfig({
 
   useEffect(() => setPathDraft(path), [path]);
 
-  const refresh = useCallback(
-    async (p: string) => {
-      if (!p.trim()) {
-        setFiles([]);
-        setError(null);
-        return;
-      }
-      setLoading(true);
+  useEffect(() => {
+    if (!path.trim()) {
+      setFiles([]);
       setError(null);
-      try {
-        const res = await api.listDocuments(p);
-        setFiles(res.files);
-      } catch (err) {
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    api
+      .listDocuments(path)
+      .then((res) => {
+        if (!cancelled) setFiles(res.files);
+      })
+      .catch((err) => {
+        if (cancelled) return;
         setFiles([]);
         setError(err instanceof Error ? err.message : "Failed to list files.");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [],
-  );
-
-  useEffect(() => {
-    refresh(path);
-  }, [path, refresh]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
 
   const commitPath = () => {
     const trimmed = pathDraft.trim();
-    if (trimmed !== path) {
-      onConfigChange(node.id, "path", trimmed || null);
-      // Filename refers to a file in the previous path — invalidate it.
-      if (filename) onConfigChange(node.id, "filename", null);
-    }
+    if (trimmed !== path) onConfigChange(node.id, "path", trimmed || null);
   };
+
+  const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
 
   return (
     <section className="space-y-3">
@@ -694,39 +692,37 @@ function DocumentHandlerConfig({
           className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-sm font-mono text-zinc-900 dark:text-zinc-50"
         />
         <span className="block mt-1 text-[11px] text-zinc-500 normal-case tracking-normal">
-          Filesystem path on the backend host. Only <code>.txt</code> /{" "}
-          <code>.md</code> files are listed.
+          Every <code>.txt</code> / <code>.md</code> file in this folder is
+          loaded at run time. Filesystem path on the backend host.
         </span>
-      </label>
-
-      <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
-        File
-        <select
-          value={filename}
-          disabled={loading || !path || files.length === 0}
-          onChange={(e) =>
-            onConfigChange(node.id, "filename", e.target.value || null)
-          }
-          className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-sm disabled:opacity-50"
-        >
-          <option value="">(first available)</option>
-          {files.map((f) => (
-            <option key={f.name} value={f.name}>
-              {f.name} · {(f.size / 1024).toFixed(1)} KB
-            </option>
-          ))}
-        </select>
       </label>
 
       {loading ? (
         <p className="text-[11px] text-zinc-500">Listing files…</p>
       ) : error ? (
         <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p>
-      ) : path && files.length === 0 ? (
+      ) : !path ? null : files.length === 0 ? (
         <p className="text-[11px] text-zinc-500">
           No <code>.txt</code> or <code>.md</code> files in that directory.
         </p>
-      ) : null}
+      ) : (
+        <div className="rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-3 py-2">
+          <p className="text-[11px] text-zinc-500">
+            {files.length} file{files.length === 1 ? "" : "s"} ·{" "}
+            {(totalBytes / 1024).toFixed(1)} KB total will be loaded
+          </p>
+          <ul className="mt-1 space-y-0.5 text-[11px] font-mono text-zinc-700 dark:text-zinc-300">
+            {files.map((f) => (
+              <li key={f.name} className="flex justify-between gap-3">
+                <span className="truncate">{f.name}</span>
+                <span className="text-zinc-500 tabular-nums">
+                  {(f.size / 1024).toFixed(1)} KB
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

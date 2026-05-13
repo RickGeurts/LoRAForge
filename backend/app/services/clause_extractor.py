@@ -41,17 +41,22 @@ class Clause:
     title: str
     type: str
     text: str
+    source_file: str | None = None
 
-    def as_dict(self) -> dict[str, str]:
+    def as_dict(self) -> dict[str, str | None]:
         return {
             "section": f"§{self.section}",
             "title": self.title,
             "type": self.type,
             "text": self.text,
+            "sourceFile": self.source_file,
         }
 
     def source_anchor(self) -> str:
-        return f"§{self.section} {self.title}"
+        anchor = f"§{self.section} {self.title}"
+        if self.source_file:
+            return f"{self.source_file} {anchor}"
+        return anchor
 
 
 def _classify(text: str, title: str) -> str:
@@ -84,15 +89,17 @@ def extract_clauses(prospectus_text: str) -> list[Clause]:
 
 def render_for_prompt(clauses: list[Clause]) -> str:
     """One clause per line, formatted for an AI classifier prompt."""
-    return "\n".join(
-        f"- §{c.section} {c.title} [{c.type}]: {c.text}" for c in clauses
-    )
+    def _line(c: Clause) -> str:
+        prefix = f"{c.source_file} " if c.source_file else ""
+        return f"- {prefix}§{c.section} {c.title} [{c.type}]: {c.text}"
+
+    return "\n".join(_line(c) for c in clauses)
 
 
 def summary_line(clauses: list[Clause]) -> str:
     """One-line human summary for the run trace."""
     if not clauses:
-        return "No § sections found — prospectus text may be unstructured."
+        return "No § sections found — document text may be unstructured."
     by_type: dict[str, list[str]] = {}
     for c in clauses:
         by_type.setdefault(c.type, []).append(f"§{c.section}")

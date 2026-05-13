@@ -281,7 +281,7 @@ def _seed_workflows() -> list[Workflow]:
     docs_path = str(_SAMPLE_DOCS_DIR)
     for node in wf.nodes:
         if node.type == "document_handler":
-            node.config = {**node.config, "path": docs_path, "filename": "tier2_2031.txt"}
+            node.config = {**node.config, "path": docs_path}
     return [wf]
 
 
@@ -351,39 +351,49 @@ def _reconcile_tasks(session: Session) -> None:
 
 
 def _migrate_legacy_workflow_nodes(session: Session) -> None:
-    """One-time rename of prospectus_loader nodes to document_handler.
+    """One-time cleanup of workflow node config.
 
-    Existing workflows in the DB still carry the old node type; without
-    this rewrite the executor wouldn't recognise them as input nodes and
-    the migrated MREL template would have a broken root.
+    1. Rename prospectus_loader → document_handler (with sample path).
+    2. Strip the now-defunct `filename` key from document_handler config
+       (Document Handler loads the whole folder).
     """
     docs_path = str(_SAMPLE_DOCS_DIR)
     for wf_row in session.exec(select(WorkflowTable)).all():
-        legacy = any(
-            (n.get("type") == "prospectus_loader") for n in (wf_row.nodes or [])
-        )
-        if not legacy:
-            continue
-        wf_row.nodes = [
-            {
-                **n,
-                "type": "document_handler",
-                "label": "Document Handler",
-                "config": {
-                    **{
+        rewrote = False
+        new_nodes: list[dict] = []
+        for n in wf_row.nodes or []:
+            if n.get("type") == "prospectus_loader":
+                rewrote = True
+                new_nodes.append({
+                    **n,
+                    "type": "document_handler",
+                    "label": "Document Handler",
+                    "config": {
+                        **{
+                            k: v
+                            for k, v in (n.get("config") or {}).items()
+                            if k not in ("prospectus_id", "filename")
+                        },
+                        "path": docs_path,
+                    },
+                })
+            elif n.get("type") == "document_handler" and "filename" in (
+                n.get("config") or {}
+            ):
+                rewrote = True
+                new_nodes.append({
+                    **n,
+                    "config": {
                         k: v
                         for k, v in (n.get("config") or {}).items()
-                        if k != "prospectus_id"
+                        if k != "filename"
                     },
-                    "path": docs_path,
-                    "filename": "tier2_2031.txt",
-                },
-            }
-            if n.get("type") == "prospectus_loader"
-            else n
-            for n in (wf_row.nodes or [])
-        ]
-        session.add(wf_row)
+                })
+            else:
+                new_nodes.append(n)
+        if rewrote:
+            wf_row.nodes = new_nodes
+            session.add(wf_row)
 
 
 def seed_if_empty(session: Session) -> None:

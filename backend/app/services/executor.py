@@ -40,30 +40,36 @@ _OUTPUT_SLOTS: dict[str, str] = {
 }
 
 
-def _load_document(
+def _load_documents(
     node: WorkflowNode, inputs: dict[str, Any]
-) -> tuple[str | None, str | None, str | None, str | None]:
-    """Resolve (path, filename, text, error) for a document_handler node.
+) -> tuple[str | None, list[document_loader.LoadedDocument], str | None]:
+    """Load every supported file from the node's configured path.
 
-    Priority for path: node.config.path > inputs.path.
-    Priority for filename: node.config.filename > inputs.filename > first
-    file in the directory.
+    Returns (path, documents, error). `documents` is empty on error.
     """
     config = node.config or {}
     path = (config.get("path") or inputs.get("document_path") or "").strip()
-    filename = (config.get("filename") or inputs.get("document_filename") or "").strip()
     if not path:
-        return None, None, None, "no path configured"
+        return None, [], "no path configured"
     try:
-        if not filename:
-            picked = document_loader.pick_default_filename(path)
-            if not picked:
-                return path, None, None, f"no readable documents in {path}"
-            filename = picked
-        text = document_loader.read_file(path, filename)
-        return path, filename, text, None
+        docs = document_loader.read_all_files(path)
     except document_loader.DocumentLoaderError as exc:
-        return path, filename or None, None, str(exc)
+        return path, [], str(exc)
+    if not docs:
+        return path, [], f"no readable documents in {path}"
+    return path, docs, None
+
+
+def _concat_documents(docs: list[document_loader.LoadedDocument]) -> str:
+    """Join all loaded files into one text blob with filename headers.
+
+    Downstream prompt templates that reference {document_text} see a
+    single string; the clause extractor still attributes findings per
+    file via state["documents"].
+    """
+    return "\n\n".join(
+        f"=== {d.filename} ===\n{d.text}".rstrip() for d in docs
+    )
 
 
 
@@ -400,19 +406,28 @@ def execute_workflow(
         adapter_id = adapter.id if adapter else None
         adapter_version = adapter.version if adapter else None
 
-        # Document Handler reads a file off the host filesystem into the
-        # shared "document_text" slot. AI nodes downstream consume it via
-        # {document_text} in their prompt templates.
+        # Document Handler reads every file at the configured path and
+        # concatenates them into state["document_text"]. AI nodes consume
+        # the blob via {document_text}; the clause extractor consumes the
+        # structured list state["documents"] so audit anchors keep the
+        # source filename.
         if node.type == "document_handler":
-            doc_path, doc_filename, doc_text, doc_error = _load_document(node, state)
-            if doc_error is None and doc_text is not None and doc_filename:
-                state["document_text"] = doc_text
-                state["document"] = doc_filename
+            doc_path, docs, doc_error = _load_documents(node, state)
+            if doc_error is None and docs:
+                state["documents"] = [
+                    {"filename": d.filename, "text": d.text} for d in docs
+                ]
+                state["document_text"] = _concat_documents(docs)
                 state["document_path"] = doc_path
-                state["document_filename"] = doc_filename
+                state["document"] = (
+                    docs[0].filename if len(docs) == 1 else f"{len(docs)} files"
+                )
+                total_chars = sum(len(d.text) for d in docs)
+                names = ", ".join(d.filename for d in docs)
                 status, summary = (
                     "ok",
-                    f"Loaded '{doc_filename}' ({len(doc_text):,} chars).",
+                    f"Loaded {len(docs)} document{'' if len(docs) == 1 else 's'} "
+                    f"from {doc_path}: {names} ({total_chars:,} chars total).",
                 )
             else:
                 status, summary = "warn", f"Document load failed: {doc_error}"
@@ -441,12 +456,29 @@ def execute_workflow(
             state.setdefault("pdf_text", state.get("document_text", ""))
 
         # Clause extraction is deterministic (regex + keyword classify) so
-        # the audit trail can cite which clause drove a verdict. Runs even
-        # though the node sits in the AI palette group.
+        # the audit trail can cite which clause drove a verdict. Runs each
+        # loaded document separately so clauses keep their source filename.
         if node.type == "clause_extractor":
-            clauses = clause_extractor.extract_clauses(
-                state.get("document_text", "")
-            )
+            documents = state.get("documents")
+            if isinstance(documents, list) and documents:
+                pairs = [
+                    (str(d.get("filename", "")), str(d.get("text", "")))
+                    for d in documents
+                ]
+            else:
+                pairs = [("", state.get("document_text", ""))]
+            clauses: list[clause_extractor.Clause] = []
+            for source_file, text in pairs:
+                for c in clause_extractor.extract_clauses(text):
+                    clauses.append(
+                        clause_extractor.Clause(
+                            section=c.section,
+                            title=c.title,
+                            type=c.type,
+                            text=c.text,
+                            source_file=source_file or None,
+                        )
+                    )
             state["clauses_list"] = [c.as_dict() for c in clauses]
             state["clauses"] = clause_extractor.render_for_prompt(clauses)
             state["clause_sources"] = [c.source_anchor() for c in clauses]

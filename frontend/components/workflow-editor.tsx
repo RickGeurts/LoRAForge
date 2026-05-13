@@ -557,6 +557,10 @@ function NodeConfigDrawer({
 
   const isAi = node.data.group === "ai";
   const isDocumentHandler = node.data.nodeType === "document_handler";
+  const isConfidenceFilter = node.data.nodeType === "confidence_filter";
+  const isValidator = node.data.nodeType === "validator";
+  const hasTypeSpecificConfig =
+    isAi || isDocumentHandler || isConfidenceFilter || isValidator;
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -592,6 +596,10 @@ function NodeConfigDrawer({
           {isDocumentHandler ? (
             <DocumentHandlerConfig node={node} onConfigChange={onConfigChange} />
           ) : null}
+          {isValidator ? <ValidatorInfo /> : null}
+          {isConfidenceFilter ? (
+            <ConfidenceFilterConfig node={node} onConfigChange={onConfigChange} />
+          ) : null}
           {isAi ? (
             <AdapterBindingConfig
               node={node}
@@ -599,7 +607,7 @@ function NodeConfigDrawer({
               onAdapterChange={onAdapterChange}
             />
           ) : null}
-          {!isAi && !isDocumentHandler ? (
+          {!hasTypeSpecificConfig ? (
             <p className="text-sm text-zinc-500 leading-relaxed">
               This node runs deterministic logic and has no configurable
               parameters yet.
@@ -723,6 +731,86 @@ function DocumentHandlerConfig({
           </ul>
         </div>
       )}
+    </section>
+  );
+}
+
+function ValidatorInfo() {
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs uppercase tracking-wide text-zinc-500">
+        MREL eligibility rules
+      </h3>
+      <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">
+        The Validator runs four deterministic rules from BRRD/SRMR Article 45b
+        against the extracted clauses:
+      </p>
+      <ul className="text-xs text-zinc-700 dark:text-zinc-300 list-disc pl-5 space-y-1">
+        <li>Subordinated instrument (not senior preferred)</li>
+        <li>Unsecured (not covered / secured)</li>
+        <li>Effective maturity ≥ 1 year (perpetual counts)</li>
+        <li>Issued by the resolution entity</li>
+      </ul>
+      <p className="text-[11px] text-zinc-500 leading-relaxed">
+        Each rule cites the §/file that drove its verdict. The combined
+        pass-rate becomes the run&apos;s confidence and overrides the AI
+        classifier&apos;s verdict — that&apos;s the regulator-friendly audit
+        story.
+      </p>
+    </section>
+  );
+}
+
+function ConfidenceFilterConfig({
+  node,
+  onConfigChange,
+}: {
+  node: FlowNode;
+  onConfigChange: (nodeId: string, key: string, value: string | null) => void;
+}) {
+  const stored = node.data.config.threshold;
+  const threshold =
+    typeof stored === "number"
+      ? stored
+      : typeof stored === "string"
+      ? Number(stored)
+      : 0.8;
+
+  const commit = (value: number) => {
+    const clamped = Math.max(0, Math.min(1, value));
+    onConfigChange(node.id, "threshold", String(clamped));
+  };
+
+  return (
+    <section className="space-y-3">
+      <h3 className="text-xs uppercase tracking-wide text-zinc-500">
+        Threshold
+      </h3>
+      <div className="flex items-center gap-3">
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={Number.isFinite(threshold) ? threshold : 0.8}
+          onChange={(e) => commit(Number(e.target.value))}
+          className="flex-1 accent-zinc-900 dark:accent-zinc-50"
+        />
+        <input
+          type="number"
+          min={0}
+          max={1}
+          step={0.05}
+          value={Number.isFinite(threshold) ? threshold : 0.8}
+          onChange={(e) => commit(Number(e.target.value))}
+          className="w-20 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-sm tabular-nums"
+        />
+      </div>
+      <p className="text-[11px] text-zinc-500 leading-relaxed">
+        The upstream Validator&apos;s pass-rate is compared against this
+        threshold. Runs below the bar are flagged{" "}
+        <code>needs_review</code> for human follow-up.
+      </p>
     </section>
   );
 }

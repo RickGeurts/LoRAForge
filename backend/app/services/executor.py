@@ -19,7 +19,12 @@ from app.models.adapter import Adapter
 from app.models.run import RunOutput, TraceEntry, TraceStatus
 from app.models.task import Task
 from app.models.workflow import Workflow, WorkflowNode
-from app.services import clause_extractor, document_loader, ollama_client
+from app.services import (
+    clause_extractor,
+    document_loader,
+    ollama_client,
+    regulatory_rules,
+)
 
 _NODE_STEP_MS = 30
 _FALLBACK_ADAPTER_VERSION = "0.1.0"
@@ -263,14 +268,27 @@ def _run_ai_node(
 
 
 def _decision_from_trace(
-    trace: list[TraceEntry], types: set[str]
+    trace: list[TraceEntry],
+    types: set[str],
+    state: dict[str, Any],
 ) -> tuple[str, float]:
-    """Read the regulatory decision off the AI classifier's response.
+    """Compute the regulatory decision + confidence.
 
-    Tries mrel_classifier first, then instrument_classifier. Falls back
-    to rule-based defaults when no AI step ran or its output couldn't be
-    parsed.
+    Deterministic rules win when the Validator ran — that's the audit
+    story. The AI verdict is informational and still appears in the
+    trace, but it doesn't override a rule-based fail. When no Validator
+    ran, fall back to parsing the AI classifier's output.
     """
+    validation = state.get("validation_result") or None
+    if isinstance(validation, dict) and validation.get("rules"):
+        score = float(validation.get("score", 0.0))
+        failed = int(validation.get("failed", 0))
+        if failed == 0 and score >= 0.99:
+            return "MREL-eligible", score
+        if failed == 0:
+            return "MREL-eligible (with uncertainty)", score
+        return "MREL-not-eligible", score
+
     for entry in trace:
         if entry.node_type == "mrel_classifier" and entry.status != "warn":
             label = _parse_eligibility_label(entry.summary)
@@ -300,10 +318,10 @@ def _build_output(
 ) -> RunOutput:
     types = {entry.node_type for entry in trace}
 
-    # Prefer the AI classifier's parsed verdict as the regulatory decision.
-    # Fall back to the rule-based defaults only when no AI signal is
-    # available — so the trace and the headline don't disagree.
-    decision, confidence = _decision_from_trace(trace, types)
+    # Rules-derived verdict wins when the Validator ran (deterministic,
+    # auditable). Falls back to the AI classifier's parsed output or the
+    # legacy defaults when no rule evaluation is available.
+    decision, confidence = _decision_from_trace(trace, types, state)
 
     # Cite the actual clause sections the extractor identified. Falls back
     # to legacy placeholders only when no extraction ran (e.g. a workflow
@@ -483,6 +501,81 @@ def execute_workflow(
             state["clauses"] = clause_extractor.render_for_prompt(clauses)
             state["clause_sources"] = [c.source_anchor() for c in clauses]
             status, summary = "ok", clause_extractor.summary_line(clauses)
+            step_ms = _NODE_STEP_MS
+            cursor = cursor + timedelta(milliseconds=step_ms)
+            trace.append(
+                TraceEntry(
+                    nodeId=node.id,
+                    nodeType=node.type,
+                    label=node.label,
+                    group=node.group,
+                    status=status,
+                    summary=summary,
+                    startedAt=node_started,
+                    finishedAt=cursor,
+                    model=None,
+                    totalTokens=None,
+                    latencyMs=None,
+                    adapterId=adapter_id,
+                    adapterVersion=adapter_version,
+                )
+            )
+            continue
+
+        # Validator runs the deterministic MREL rule set on the extracted
+        # clauses. Result is structured so the audit trail can cite the
+        # exact §/file that drove each pass/fail.
+        if node.type == "validator":
+            clauses_list = state.get("clauses_list") or []
+            results = regulatory_rules.evaluate_mrel_rules(clauses_list)
+            validation_score = regulatory_rules.score(results)
+            state["validation_result"] = {
+                "rules": [r.as_dict() for r in results],
+                "score": validation_score,
+                "passed": sum(1 for r in results if r.status == "pass"),
+                "failed": sum(1 for r in results if r.status == "fail"),
+                "uncertain": sum(1 for r in results if r.status == "uncertain"),
+            }
+            state["validation_score"] = validation_score
+            any_failed = any(r.status == "fail" for r in results)
+            status = "warn" if any_failed else "ok"
+            summary = regulatory_rules.summary_line(results)
+            step_ms = _NODE_STEP_MS
+            cursor = cursor + timedelta(milliseconds=step_ms)
+            trace.append(
+                TraceEntry(
+                    nodeId=node.id,
+                    nodeType=node.type,
+                    label=node.label,
+                    group=node.group,
+                    status=status,
+                    summary=summary,
+                    startedAt=node_started,
+                    finishedAt=cursor,
+                    model=None,
+                    totalTokens=None,
+                    latencyMs=None,
+                    adapterId=adapter_id,
+                    adapterVersion=adapter_version,
+                )
+            )
+            continue
+
+        # Confidence Filter compares the upstream score against a
+        # configurable threshold. Drives the needs_review status on the
+        # final run when the rules don't clear the bar.
+        if node.type == "confidence_filter":
+            threshold = float((node.config or {}).get("threshold", 0.80))
+            confidence = float(state.get("validation_score", 0.0))
+            passed = confidence >= threshold
+            state["confidence_pass"] = passed
+            state["confidence_threshold"] = threshold
+            status = "ok" if passed else "warn"
+            summary = (
+                f"Confidence {confidence:.2f} "
+                f"{'≥' if passed else '<'} threshold {threshold:.2f} "
+                f"→ {'passed' if passed else 'flagged'}."
+            )
             step_ms = _NODE_STEP_MS
             cursor = cursor + timedelta(milliseconds=step_ms)
             trace.append(

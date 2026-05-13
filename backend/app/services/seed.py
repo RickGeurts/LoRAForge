@@ -489,6 +489,13 @@ def _migrate_legacy_workflow_nodes(session: Session) -> None:
                         "rules": [dict(r) for r in _DEFAULT_VALIDATOR_RULES],
                     },
                 })
+            elif n.get("type") == "confidence_filter":
+                rewrote = True
+                new_nodes.append({
+                    **n,
+                    "type": "rules_threshold",
+                    "label": "Rules Threshold",
+                })
             else:
                 new_nodes.append(n)
         if rewrote:

@@ -168,7 +168,8 @@ def _mock_summary(node: WorkflowNode, inputs: dict[str, Any]) -> tuple[TraceStat
         "mrel_classifier": ("ok", "Classified as MREL-eligible (0.87)."),
         "instrument_classifier": ("ok", "Classified as Tier 2 capital instrument (0.82)."),
         "validator": ("ok", "Checked 5 regulatory rules — all passed."),
-        "confidence_filter": ("ok", "Confidence 0.87 ≥ threshold 0.80 → passed."),
+        "rules_threshold": ("ok", "Validation 0.87 ≥ threshold 0.80 → passed."),
+        "ai_confidence_filter": ("ok", "AI probe unavailable (mock)."),
         "router": ("ok", "Routed to standard review branch."),
         "human_review": ("warn", "Flagged for human review (mock: auto-approved)."),
         "decision_output": ("ok", "Emitted decision payload."),
@@ -564,21 +565,110 @@ def execute_workflow(
             )
             continue
 
-        # Confidence Filter compares the upstream score against a
-        # configurable threshold. Drives the needs_review status on the
-        # final run when the rules don't clear the bar.
-        if node.type == "confidence_filter":
+        # Rules Threshold compares the upstream Validator pass-rate against
+        # a configurable threshold. Drives needs_review on the final run
+        # when deterministic rules don't clear the bar.
+        if node.type == "rules_threshold":
             threshold = float((node.config or {}).get("threshold", 0.80))
             confidence = float(state.get("validation_score", 0.0))
             passed = confidence >= threshold
-            state["confidence_pass"] = passed
-            state["confidence_threshold"] = threshold
+            state["rules_threshold_pass"] = passed
+            state["rules_threshold_value"] = threshold
             status = "ok" if passed else "warn"
             summary = (
-                f"Confidence {confidence:.2f} "
+                f"Validation {confidence:.2f} "
                 f"{'≥' if passed else '<'} threshold {threshold:.2f} "
                 f"→ {'passed' if passed else 'flagged'}."
             )
+            step_ms = _NODE_STEP_MS
+            cursor = cursor + timedelta(milliseconds=step_ms)
+            trace.append(
+                TraceEntry(
+                    nodeId=node.id,
+                    nodeType=node.type,
+                    label=node.label,
+                    group=node.group,
+                    status=status,
+                    summary=summary,
+                    startedAt=node_started,
+                    finishedAt=cursor,
+                    model=None,
+                    totalTokens=None,
+                    latencyMs=None,
+                    adapterId=adapter_id,
+                    adapterVersion=adapter_version,
+                )
+            )
+            continue
+
+        # AI Confidence Filter probes the model with a single-token,
+        # constrained prompt and captures top_logprobs for the candidate
+        # verdict tokens via Ollama's OpenAI-compatible endpoint. Confidence
+        # = softmax over the matched candidates. Independent of the rules.
+        if node.type == "ai_confidence_filter":
+            threshold = float((node.config or {}).get("threshold", 0.70))
+            raw_candidates = (node.config or {}).get(
+                "candidates", ["eligible", "not_eligible"]
+            )
+            candidates = (
+                [str(c).strip() for c in raw_candidates if str(c).strip()]
+                if isinstance(raw_candidates, list)
+                else ["eligible", "not_eligible"]
+            )
+            context = state.get("clauses") or state.get("document_text") or ""
+            probe_model = (
+                fallback_model
+                if use_ollama and fallback_model
+                else None
+            )
+            if not context.strip():
+                state["ai_confidence"] = None
+                status, summary = (
+                    "warn",
+                    "AI confidence probe skipped: no upstream clauses or document text.",
+                )
+            elif probe_model is None:
+                state["ai_confidence"] = None
+                status, summary = (
+                    "warn",
+                    "AI confidence probe skipped: Ollama unreachable.",
+                )
+            else:
+                probe_prompt = (
+                    "You are a regulatory analyst. Read the clauses below and "
+                    "answer with exactly one word from this set: "
+                    + ", ".join(candidates)
+                    + ".\n\nClauses:\n"
+                    + context
+                    + "\n\nAnswer:"
+                )
+                result = ollama_client.score_verdict(
+                    probe_prompt, candidates, model=probe_model
+                )
+                if result is None or result.error:
+                    err = result.error if result else "no_result"
+                    state["ai_confidence"] = None
+                    status, summary = (
+                        "warn",
+                        f"AI confidence probe failed ({err}). "
+                        "This Ollama build may not expose logprobs.",
+                    )
+                else:
+                    state["ai_confidence"] = result.confidence
+                    state["ai_verdict"] = result.verdict
+                    state["ai_confidence_probs"] = result.probs
+                    probs_str = ", ".join(
+                        f"{k}={v:.2f}" for k, v in result.probs.items()
+                    )
+                    passed = result.confidence >= threshold
+                    status = "ok" if passed else "warn"
+                    summary = (
+                        f"AI verdict '{result.verdict}' "
+                        f"p={result.confidence:.2f} "
+                        f"({probs_str}) "
+                        f"{'≥' if passed else '<'} threshold {threshold:.2f} "
+                        f"→ {'confident' if passed else 'uncertain'}."
+                    )
             step_ms = _NODE_STEP_MS
             cursor = cursor + timedelta(milliseconds=step_ms)
             trace.append(

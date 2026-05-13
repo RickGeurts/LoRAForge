@@ -45,7 +45,8 @@ const STATIC_PALETTE: PaletteItem[] = [
   { group: "documents", type: "document_handler", label: "Document Handler" },
   { group: "documents", type: "pdf_extractor", label: "PDF Extractor" },
   { group: "rules", type: "validator", label: "Validator" },
-  { group: "rules", type: "confidence_filter", label: "Confidence Filter" },
+  { group: "rules", type: "rules_threshold", label: "Rules Threshold" },
+  { group: "rules", type: "ai_confidence_filter", label: "AI Confidence Filter" },
   { group: "logic", type: "router", label: "Router" },
   { group: "logic", type: "human_review", label: "Human Review" },
   { group: "output", type: "decision_output", label: "Decision Output" },
@@ -588,10 +589,15 @@ function NodeConfigDrawer({
 
   const isAi = node.data.group === "ai";
   const isDocumentHandler = node.data.nodeType === "document_handler";
-  const isConfidenceFilter = node.data.nodeType === "confidence_filter";
+  const isRulesThreshold = node.data.nodeType === "rules_threshold";
+  const isAiConfidenceFilter = node.data.nodeType === "ai_confidence_filter";
   const isValidator = node.data.nodeType === "validator";
   const hasTypeSpecificConfig =
-    isAi || isDocumentHandler || isConfidenceFilter || isValidator;
+    isAi ||
+    isDocumentHandler ||
+    isRulesThreshold ||
+    isAiConfidenceFilter ||
+    isValidator;
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -634,8 +640,15 @@ function NodeConfigDrawer({
               onConfigField={onConfigField}
             />
           ) : null}
-          {isConfidenceFilter ? (
-            <ConfidenceFilterConfig node={node} onConfigChange={onConfigChange} />
+          {isRulesThreshold ? (
+            <RulesThresholdConfig node={node} onConfigChange={onConfigChange} />
+          ) : null}
+          {isAiConfidenceFilter ? (
+            <AiConfidenceFilterConfig
+              node={node}
+              onConfigChange={onConfigChange}
+              onConfigField={onConfigField}
+            />
           ) : null}
           {isAi ? (
             <AdapterBindingConfig
@@ -1035,55 +1048,124 @@ function RuleCard({
   );
 }
 
-function ConfidenceFilterConfig({
+function _thresholdValue(stored: unknown, fallback: number): number {
+  if (typeof stored === "number") return stored;
+  if (typeof stored === "string") {
+    const n = Number(stored);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  return fallback;
+}
+
+function ThresholdSlider({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (next: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.05}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="flex-1 accent-zinc-900 dark:accent-zinc-50"
+      />
+      <input
+        type="number"
+        min={0}
+        max={1}
+        step={0.05}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-20 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-sm tabular-nums"
+      />
+    </div>
+  );
+}
+
+function RulesThresholdConfig({
   node,
   onConfigChange,
 }: {
   node: FlowNode;
   onConfigChange: (nodeId: string, key: string, value: string | null) => void;
 }) {
-  const stored = node.data.config.threshold;
-  const threshold =
-    typeof stored === "number"
-      ? stored
-      : typeof stored === "string"
-      ? Number(stored)
-      : 0.8;
-
-  const commit = (value: number) => {
-    const clamped = Math.max(0, Math.min(1, value));
+  const threshold = _thresholdValue(node.data.config.threshold, 0.8);
+  const commit = (v: number) => {
+    const clamped = Math.max(0, Math.min(1, v));
     onConfigChange(node.id, "threshold", String(clamped));
   };
 
   return (
     <section className="space-y-3">
       <h3 className="text-xs uppercase tracking-wide text-zinc-500">
-        Threshold
+        Validation threshold
       </h3>
-      <div className="flex items-center gap-3">
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={Number.isFinite(threshold) ? threshold : 0.8}
-          onChange={(e) => commit(Number(e.target.value))}
-          className="flex-1 accent-zinc-900 dark:accent-zinc-50"
-        />
-        <input
-          type="number"
-          min={0}
-          max={1}
-          step={0.05}
-          value={Number.isFinite(threshold) ? threshold : 0.8}
-          onChange={(e) => commit(Number(e.target.value))}
-          className="w-20 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-sm tabular-nums"
-        />
-      </div>
+      <ThresholdSlider value={threshold} onChange={commit} />
       <p className="text-[11px] text-zinc-500 leading-relaxed">
-        The upstream Validator&apos;s pass-rate is compared against this
-        threshold. Runs below the bar are flagged{" "}
-        <code>needs_review</code> for human follow-up.
+        Compares the upstream Validator&apos;s rule pass-rate (
+        <code>validation_score</code>) against this threshold. Below the bar
+        the run is flagged <code>needs_review</code>. Source: deterministic
+        rules — no AI.
+      </p>
+    </section>
+  );
+}
+
+function AiConfidenceFilterConfig({
+  node,
+  onConfigChange,
+  onConfigField,
+}: {
+  node: FlowNode;
+  onConfigChange: (nodeId: string, key: string, value: string | null) => void;
+  onConfigField: (nodeId: string, key: string, value: unknown) => void;
+}) {
+  const threshold = _thresholdValue(node.data.config.threshold, 0.7);
+  const rawCandidates = node.data.config.candidates;
+  const candidatesText = Array.isArray(rawCandidates)
+    ? rawCandidates.join(", ")
+    : "eligible, not_eligible";
+
+  const commitThreshold = (v: number) => {
+    const clamped = Math.max(0, Math.min(1, v));
+    onConfigChange(node.id, "threshold", String(clamped));
+  };
+  const commitCandidates = (raw: string) => {
+    const list = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    onConfigField(node.id, "candidates", list);
+  };
+
+  return (
+    <section className="space-y-3">
+      <h3 className="text-xs uppercase tracking-wide text-zinc-500">
+        AI confidence threshold
+      </h3>
+      <ThresholdSlider value={threshold} onChange={commitThreshold} />
+      <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+        Candidate verdicts (comma-separated)
+        <input
+          defaultValue={candidatesText}
+          onBlur={(e) => commitCandidates(e.target.value)}
+          placeholder="eligible, not_eligible"
+          className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
+        />
+      </label>
+      <p className="text-[11px] text-zinc-500 leading-relaxed">
+        Probes Ollama with a one-token constrained prompt and captures{" "}
+        <code>top_logprobs</code> for the listed verdicts. Confidence is the
+        softmax over those candidates&apos; logprobs — an actual model
+        probability, not a self-report. Below the threshold the run is
+        flagged <code>needs_review</code>. Requires an Ollama build that
+        exposes logprobs (recent 0.x — falls back to a warning otherwise).
       </p>
     </section>
   );

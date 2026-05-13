@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LoRA Forge — Frontend
 
-## Getting Started
+Next.js 16 + React 19 + Tailwind v4 UI for LoRA Forge. Visual workflow builder (React Flow), adapter registry, dataset viewer, tasks registry, fine-tune jobs with live progress, and run history with audit trails.
 
-First, run the development server:
+See the root [`README.md`](../README.md) for the product context.
 
-```bash
+## Setup
+
+```powershell
+cd frontend
+npm install        # first time only
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+App at http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Backend wiring
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Pages call the FastAPI backend at `http://127.0.0.1:8001` by default. Override with:
 
-## Learn More
+```powershell
+$env:NEXT_PUBLIC_API_BASE_URL = "http://127.0.0.1:8001"
+```
 
-To learn more about Next.js, take a look at the following resources:
+If the backend is down the pages degrade gracefully with an inline notice.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Pages
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `/` — Dashboard
+- `/templates` — Workflow templates
+- `/workflows`, `/workflows/[id]` — Workflow list + visual editor (React Flow)
+- `/adapters` — Adapter registry (with delete)
+- `/datasets`, `/datasets/[id]` — Datasets + row inspection
+- `/tasks`, `/tasks/new`, `/tasks/[id]`, `/tasks/[id]/edit` — Task registry CRUD
+- `/finetune`, `/finetune/[id]` — Fine-tune jobs with live progress bar + ETA
+- `/runs`, `/runs/[id]` — Run history + per-node trace
+- `/settings` — Ollama status, base URL, available models
 
-## Deploy on Vercel
+## Notes for agents
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This is **Next.js 16** with **React 19** and **Tailwind v4** — read [`AGENTS.md`](./AGENTS.md) and the bundled docs in `node_modules/next/dist/docs/` before changing routing, server components, or styling. APIs differ from older Next versions.

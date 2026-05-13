@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 import { DeleteRowButton } from "@/components/delete-row-button";
-import { api, type FineTuneRun } from "@/lib/api";
+import { TaskChip } from "@/components/task-chip";
+import { api, type FineTuneRun, type Task } from "@/lib/api";
 
 const STATUS_TONE: Record<FineTuneRun["status"], string> = {
   queued: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
@@ -45,11 +46,14 @@ function etaFor(run: FineTuneRun, now: number): number | null {
 
 export function FineTuneHistory({
   initialRuns,
+  tasks,
 }: {
   initialRuns: FineTuneRun[];
+  tasks: Task[];
 }) {
   const [runs, setRuns] = useState<FineTuneRun[]>(initialRuns);
   const [now, setNow] = useState<number>(() => Date.now());
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
 
   // Poll while any run is in flight; stop once everything's terminal.
   useEffect(() => {
@@ -102,7 +106,7 @@ export function FineTuneHistory({
                 href={`/finetune/${r.id}`}
                 className="block px-5 py-3 pr-20 hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
               >
-                <div className="flex items-baseline gap-3 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-sm text-zinc-900 dark:text-zinc-50">
                     {r.adapterName}{" "}
                     <span className="text-zinc-500 font-mono text-xs">
@@ -114,10 +118,15 @@ export function FineTuneHistory({
                   >
                     {r.status}
                   </span>
+                  <TaskChip
+                    task={taskById.get(r.taskType) ?? null}
+                    taskType={r.taskType}
+                    asLink={false}
+                  />
                 </div>
                 <p className="mt-0.5 text-xs text-zinc-500">
-                  {r.taskType} · base {r.baseModel} · {r.hyperparams.epochs}{" "}
-                  epochs · {formatDateTime(r.startedAt)}
+                  base {r.baseModel} · {r.hyperparams.epochs} epochs ·{" "}
+                  {formatDateTime(r.startedAt)}
                 </p>
 
                 {r.status === "running" || r.status === "queued" ? (

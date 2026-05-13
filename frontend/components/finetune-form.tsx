@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api, type Dataset, type OllamaModel } from "@/lib/api";
+import { api, type Dataset, type OllamaModel, type Task } from "@/lib/api";
+import { TaskChip } from "@/components/task-chip";
 
 // Bases that the backend's real_finetune.py knows how to load via
 // HuggingFace + peft + bitsandbytes. Keep in sync with is_supported_base.
@@ -17,12 +18,18 @@ const HF_TRAINING_BASES = [
 export function FineTuneForm({
   datasets,
   models,
+  tasks,
 }: {
   datasets: Dataset[];
   models: OllamaModel[];
+  tasks: Task[];
 }) {
   const router = useRouter();
   const [datasetId, setDatasetId] = useState(datasets[0]?.id ?? "");
+  const taskById = useMemo(
+    () => new Map(tasks.map((t) => [t.id, t])),
+    [tasks],
+  );
   const initialModel = useMemo(
     () => models.find((m) => !m.stub)?.name ?? models[0]?.name ?? "",
     [models],
@@ -36,6 +43,9 @@ export function FineTuneForm({
   const [error, setError] = useState<string | null>(null);
 
   const selectedDataset = datasets.find((d) => d.id === datasetId);
+  const targetTask = selectedDataset
+    ? taskById.get(selectedDataset.taskType) ?? null
+    : null;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,6 +113,43 @@ export function FineTuneForm({
             </span>
           ) : null}
         </label>
+
+        {selectedDataset ? (
+          <div className="col-span-2 rounded-md border border-indigo-200 dark:border-indigo-900 bg-indigo-50 dark:bg-indigo-950/30 p-3 space-y-2 normal-case tracking-normal">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] uppercase tracking-wide text-indigo-700 dark:text-indigo-300">
+                Target task
+              </span>
+              <TaskChip
+                task={targetTask}
+                taskType={selectedDataset.taskType}
+                showLabels
+              />
+            </div>
+            {targetTask ? (
+              <p className="text-[11px] text-indigo-900 dark:text-indigo-200 leading-relaxed">
+                {targetTask.description}
+              </p>
+            ) : (
+              <p className="text-[11px] text-indigo-900 dark:text-indigo-200 italic">
+                Task <code>{selectedDataset.taskType}</code> isn&apos;t in the
+                Task registry. The adapter will still record this slug — define
+                the task on the{" "}
+                <a href="/tasks" className="underline">
+                  Tasks
+                </a>{" "}
+                page first if you want the workflow editor to surface it.
+              </p>
+            )}
+            {targetTask && targetTask.kind === "classifier" ? (
+              <p className="text-[11px] text-indigo-700 dark:text-indigo-300">
+                Classifier · {targetTask.labels.length} label
+                {targetTask.labels.length === 1 ? "" : "s"} (
+                {targetTask.labels.join(", ") || "—"})
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <label className="text-xs uppercase tracking-wide text-zinc-500">
           Base model
           <select
@@ -178,8 +225,8 @@ export function FineTuneForm({
         </label>
       </div>
       <p className="text-[11px] text-zinc-500">
-        Training is mocked: metrics and adapter weights are derived
-        deterministically from the inputs above. No real GPU work happens.
+        HuggingFace bases run real QLoRA on the GPU and produce LoRA weights
+        on disk. Ollama bases use the mock training path.
       </p>
       {error ? (
         <p className="text-sm text-red-700 dark:text-red-300">{error}</p>

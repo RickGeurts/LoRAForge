@@ -8,12 +8,14 @@ export default async function FineTunePage() {
   let datasets: Awaited<ReturnType<typeof api.datasets>> = [];
   let models: Awaited<ReturnType<typeof api.ollamaModels>> = [];
   let runs: Awaited<ReturnType<typeof api.finetuneRuns>> = [];
+  let tasks: Awaited<ReturnType<typeof api.tasks>> = [];
   let error: string | null = null;
   try {
-    [datasets, models, runs] = await Promise.all([
+    [datasets, models, runs, tasks] = await Promise.all([
       api.datasets(),
       api.ollamaModels().catch(() => []),
       api.finetuneRuns(),
+      api.tasks().catch(() => []),
     ]);
   } catch (e) {
     error = e instanceof Error ? e.message : "Unknown error";
@@ -33,8 +35,8 @@ export default async function FineTunePage() {
         ) : null}
 
         <FineTunePipeline />
-        <FineTuneForm datasets={datasets} models={models} />
-        <FineTuneHistory initialRuns={runs} />
+        <FineTuneForm datasets={datasets} models={models} tasks={tasks} />
+        <FineTuneHistory initialRuns={runs} tasks={tasks} />
       </section>
     </div>
   );

@@ -36,6 +36,7 @@ import {
   type Task,
   type Workflow as ApiWorkflow,
 } from "@/lib/api";
+import { TaskChip } from "@/components/task-chip";
 
 type PaletteItem = { group: NodeGroup; type: string; label: string };
 
@@ -567,6 +568,7 @@ function EditorInner({
         <NodeConfigDrawer
           node={editingNode}
           adapters={adapters}
+          aiTasks={aiTasks}
           primitives={primitives}
           upstreamClassifier={upstreamClassifier}
           onClose={() => setEditingNodeId(null)}
@@ -599,6 +601,7 @@ function PaletteCard({ item }: { item: PaletteItem }) {
 function NodeConfigDrawer({
   node,
   adapters,
+  aiTasks,
   primitives,
   upstreamClassifier,
   onClose,
@@ -608,6 +611,7 @@ function NodeConfigDrawer({
 }: {
   node: FlowNode;
   adapters: Adapter[];
+  aiTasks: Task[];
   primitives: RulePrimitive[];
   upstreamClassifier: Task | null;
   onClose: () => void;
@@ -691,6 +695,7 @@ function NodeConfigDrawer({
             <AdapterBindingConfig
               node={node}
               adapters={adapters}
+              aiTasks={aiTasks}
               onAdapterChange={onAdapterChange}
             />
           ) : null}
@@ -1262,20 +1267,26 @@ function AiConfidenceFilterConfig({
 function AdapterBindingConfig({
   node,
   adapters,
+  aiTasks,
   onAdapterChange,
 }: {
   node: FlowNode;
   adapters: Adapter[];
+  aiTasks: Task[];
   onAdapterChange: (nodeId: string, adapterId: string | null) => void;
 }) {
   const compatible = adapters.filter((a) => a.taskType === node.data.nodeType);
   const incompatible = adapters.filter((a) => a.taskType !== node.data.nodeType);
+  const nodeTask = aiTasks.find((t) => t.id === node.data.nodeType) ?? null;
 
   return (
     <section className="space-y-2">
-      <h3 className="text-xs uppercase tracking-wide text-zinc-500">
-        Adapter binding
-      </h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-xs uppercase tracking-wide text-zinc-500">
+          Adapter binding
+        </h3>
+        <TaskChip task={nodeTask} taskType={node.data.nodeType} />
+      </div>
       <select
         value={node.data.adapterId ?? ""}
         onChange={(e) => onAdapterChange(node.id, e.target.value || null)}

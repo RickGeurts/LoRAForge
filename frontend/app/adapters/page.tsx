@@ -1,5 +1,8 @@
+import Link from "next/link";
+
 import { DeleteRowButton } from "@/components/delete-row-button";
 import { PageHeader } from "@/components/page-header";
+import { TaskChip } from "@/components/task-chip";
 import { api } from "@/lib/api";
 
 function formatDate(iso: string): string {
@@ -14,14 +17,18 @@ function formatDate(iso: string): string {
 
 export default async function AdaptersPage() {
   let adapters: Awaited<ReturnType<typeof api.adapters>> = [];
+  let tasks: Awaited<ReturnType<typeof api.tasks>> = [];
   let error: string | null = null;
   try {
-    adapters = await api.adapters();
+    [adapters, tasks] = await Promise.all([
+      api.adapters(),
+      api.tasks().catch(() => []),
+    ]);
   } catch (e) {
     error = e instanceof Error ? e.message : "Unknown error";
   }
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
 
-  // Newest first so the most recent training output is at the top.
   const sorted = [...adapters].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
   );
@@ -30,7 +37,7 @@ export default async function AdaptersPage() {
     <div className="flex flex-col">
       <PageHeader
         title="Adapters"
-        description="LoRA adapter registry. Adapters are governed, versioned artifacts bound to a base model."
+        description="LoRA adapter registry. Adapters are governed, versioned artifacts bound to a base model and a target task."
       />
       <section className="px-8 py-6 max-w-5xl">
         {error ? (
@@ -57,14 +64,23 @@ export default async function AdaptersPage() {
                     className="border-t border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900/40"
                   >
                     <td className="px-4 py-2.5 text-zinc-900 dark:text-zinc-50">
-                      <p>{a.name}</p>
+                      <Link
+                        href={`/adapters/${a.id}`}
+                        className="block hover:underline"
+                      >
+                        {a.name}
+                      </Link>
                       <p className="text-xs font-mono text-zinc-500">
                         {a.id} · v{a.version}
                         {a.weightsPath ? " · LoRA weights on disk" : ""}
                       </p>
                     </td>
-                    <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400 font-mono text-xs">
-                      {a.taskType}
+                    <td className="px-4 py-2.5">
+                      <TaskChip
+                        task={taskById.get(a.taskType) ?? null}
+                        taskType={a.taskType}
+                        showLabels
+                      />
                     </td>
                     <td className="px-4 py-2.5 text-zinc-600 dark:text-zinc-400 font-mono text-xs">
                       {a.baseModel}

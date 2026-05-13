@@ -5,6 +5,10 @@ sqlmodel==0.0.22
 httpx==0.28.1
 python-multipart==0.0.20
 
+# Document Handler — parsers for prospectus PDFs and Word documents.
+pypdf==5.5.0
+python-docx==1.1.2
+
 # Real LoRA training stack (real_finetune.py).
 # torch needs to be installed separately from the PyTorch CUDA index, e.g.
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128

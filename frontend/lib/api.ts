@@ -124,6 +124,13 @@ export type Prospectus = {
   createdAt: string;
 };
 
+export type ProspectusClause = {
+  section: string;
+  title: string;
+  type: string;
+  text: string;
+};
+
 export type ProspectusCreate = {
   name: string;
   identifier?: string | null;
@@ -293,6 +300,8 @@ export const api = {
 
   prospectuses: () => request<Prospectus[]>("/prospectuses"),
   prospectus: (id: string) => request<Prospectus>(`/prospectuses/${id}`),
+  prospectusClauses: (id: string) =>
+    request<ProspectusClause[]>(`/prospectuses/${id}/clauses`),
   createProspectus: (payload: ProspectusCreate) =>
     request<Prospectus>("/prospectuses", json(payload)),
   deleteProspectus: (id: string) =>

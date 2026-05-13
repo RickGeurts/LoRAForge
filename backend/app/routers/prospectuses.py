@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from app.db import get_session
 from app.models.prospectus import Prospectus, ProspectusTable
+from app.services import clause_extractor
 
 router = APIRouter(prefix="/prospectuses", tags=["prospectuses"])
 
@@ -61,6 +62,16 @@ def create_prospectus(
     session.commit()
     session.refresh(row)
     return row.to_api()
+
+
+@router.get("/{prospectus_id}/clauses")
+def get_prospectus_clauses(
+    prospectus_id: str, session: Session = Depends(get_session)
+) -> list[dict[str, str]]:
+    row = session.get(ProspectusTable, prospectus_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Prospectus not found")
+    return [c.as_dict() for c in clause_extractor.extract_clauses(row.text)]
 
 
 @router.delete("/{prospectus_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -53,7 +53,7 @@ def mrel_eligibility(
         version="0.1.0",
         description="Prospectus → Extract → Classify → Validate → Review → Output",
         nodes=[
-            _node("n1", "prospectus_loader", "documents", "Prospectus Loader", 40, 80),
+            _node("n1", "document_handler", "documents", "Document Handler", 40, 80),
             _node("n2", "clause_extractor", "ai", "Clause Extractor", 260, 80, adapter_id="adp_clause_v1"),
             _node("n3", "mrel_classifier", "ai", "MREL Classifier", 480, 80, adapter_id="adp_mrel_v1"),
             _node("n4", "validator", "rules", "Validator", 700, 80),
@@ -85,7 +85,7 @@ def prospectus_clause_extraction(
         version="0.1.0",
         description="Prospectus → PDF Extract → Clause Extractor → Validator → Report",
         nodes=[
-            _node("n1", "prospectus_loader", "documents", "Prospectus Loader", 40, 80),
+            _node("n1", "document_handler", "documents", "Document Handler", 40, 80),
             _node("n2", "pdf_extractor", "documents", "PDF Extractor", 260, 80),
             _node("n3", "clause_extractor", "ai", "Clause Extractor", 480, 80, adapter_id="adp_clause_v1"),
             _node("n4", "validator", "rules", "Validator", 700, 80),
@@ -113,7 +113,7 @@ def instrument_classification(
         version="0.1.0",
         description="Prospectus → Extract → Instrument Classifier → Validator → Confidence → Output",
         nodes=[
-            _node("n1", "prospectus_loader", "documents", "Prospectus Loader", 40, 80),
+            _node("n1", "document_handler", "documents", "Document Handler", 40, 80),
             _node("n2", "clause_extractor", "ai", "Clause Extractor", 260, 80, adapter_id="adp_clause_v1"),
             _node("n3", "instrument_classifier", "ai", "Instrument Classifier", 480, 80),
             _node("n4", "validator", "rules", "Validator", 700, 80),

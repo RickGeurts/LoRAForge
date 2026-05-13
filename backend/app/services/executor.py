@@ -16,11 +16,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.models.adapter import Adapter
-from app.models.prospectus import Prospectus
 from app.models.run import RunOutput, TraceEntry, TraceStatus
 from app.models.task import Task
 from app.models.workflow import Workflow, WorkflowNode
-from app.services import clause_extractor, ollama_client
+from app.services import clause_extractor, document_loader, ollama_client
 
 _NODE_STEP_MS = 30
 _FALLBACK_ADAPTER_VERSION = "0.1.0"
@@ -40,42 +39,32 @@ _OUTPUT_SLOTS: dict[str, str] = {
     "validator": "validation_result",
 }
 
-# Fallback prospectus text used only when no Prospectus registry is
-# provided (legacy callers, seed-time runs). Real callers pass a registry
-# and the prospectus_loader picks from it.
-_SAMPLE_PROSPECTUS_TEXT = (
-    "PROSPECTUS — EUR 750,000,000 Subordinated Notes due 2031\n\n"
-    "§3 Status: The Notes constitute direct, unsecured and subordinated "
-    "obligations of the Issuer ranking pari passu among themselves and "
-    "behind the claims of all senior creditors.\n\n"
-    "§4.1 Maturity: The Notes mature on 30 November 2031.\n\n"
-    "§4.3 Optional redemption: The Issuer may redeem the Notes in whole "
-    "following a Regulatory Event after the Reset Date, falling five "
-    "years after issuance.\n\n"
-    "§7 Governing Law: English law.\n\n"
-    "§9 Issuer: ResolutionCo plc, the resolution entity of the Group."
-)
 
+def _load_document(
+    node: WorkflowNode, inputs: dict[str, Any]
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Resolve (path, filename, text, error) for a document_handler node.
 
-def _resolve_prospectus(
-    node: WorkflowNode,
-    inputs: dict[str, Any],
-    prospectuses: dict[str, Prospectus],
-) -> Prospectus | None:
-    """Pick which prospectus the loader should serve.
-
-    Priority: workflow-node config > runtime inputs > first registered.
-    Returns None only when the registry is empty (legacy / seed-time).
+    Priority for path: node.config.path > inputs.path.
+    Priority for filename: node.config.filename > inputs.filename > first
+    file in the directory.
     """
-    chosen_id = (
-        (node.config or {}).get("prospectus_id")
-        or inputs.get("prospectus_id")
-    )
-    if chosen_id and chosen_id in prospectuses:
-        return prospectuses[chosen_id]
-    if prospectuses:
-        return next(iter(prospectuses.values()))
-    return None
+    config = node.config or {}
+    path = (config.get("path") or inputs.get("document_path") or "").strip()
+    filename = (config.get("filename") or inputs.get("document_filename") or "").strip()
+    if not path:
+        return None, None, None, "no path configured"
+    try:
+        if not filename:
+            picked = document_loader.pick_default_filename(path)
+            if not picked:
+                return path, None, None, f"no readable documents in {path}"
+            filename = picked
+        text = document_loader.read_file(path, filename)
+        return path, filename, text, None
+    except document_loader.DocumentLoaderError as exc:
+        return path, filename or None, None, str(exc)
+
 
 
 class _PermissiveInputs(dict):
@@ -158,14 +147,8 @@ def _topological_order(workflow: Workflow) -> list[WorkflowNode]:
 
 def _mock_summary(node: WorkflowNode, inputs: dict[str, Any]) -> tuple[TraceStatus, str]:
     doc = inputs.get("document") or "input document"
-    prospectus_name = inputs.get("prospectus_name")
-    prospectus_summary = (
-        f"Loaded '{prospectus_name}' ({doc})."
-        if prospectus_name
-        else f"Loaded prospectus '{doc}'."
-    )
     summaries: dict[str, tuple[TraceStatus, str]] = {
-        "prospectus_loader": ("ok", prospectus_summary),
+        "document_handler": ("ok", f"Loaded document '{doc}'."),
         "pdf_extractor": ("ok", "Extracted 24 pages of text."),
         "clause_extractor": (
             "ok",
@@ -322,7 +305,7 @@ def _build_output(
     extracted_sources = state.get("clause_sources") or []
     if extracted_sources:
         sources = list(extracted_sources)
-    elif "prospectus_loader" in types or "pdf_extractor" in types:
+    elif "document_handler" in types or "pdf_extractor" in types:
         sources = ["page 12 §4.2", "page 18 §6.1"]
     else:
         sources = []
@@ -358,7 +341,6 @@ def execute_workflow(
     use_ollama: bool | None = None,
     adapters: dict[str, Adapter] | None = None,
     tasks: dict[str, Task] | None = None,
-    prospectuses: dict[str, Prospectus] | None = None,
 ) -> tuple[str, RunOutput, list[TraceEntry], datetime]:
     """Run a workflow against inputs.
 
@@ -374,17 +356,16 @@ def execute_workflow(
     `tasks[node.type].prompt_template` to build the Ollama prompt. When
     omitted or the lookup misses, the node falls back to the mock summary.
 
-    `prospectuses` is the live Prospectus registry. The prospectus_loader
-    node picks one (node config > runtime input > first registered) and
-    drops its text into state["prospectus_text"]. When omitted, falls back
-    to the seeded sample text — legacy behaviour.
+    Document Handler nodes read node.config.path / .filename to load a
+    text file off the host filesystem into state["document_text"]. When
+    misconfigured the run still finishes — the node trace records the
+    error and downstream extraction sees empty text.
 
     Returns (status, output, trace, finished_at).
     """
     started = started_at or datetime.now(timezone.utc)
     adapters = adapters or {}
     tasks = tasks or {}
-    prospectuses = prospectuses or {}
     if use_ollama is None:
         status_info = ollama_client.get_status()
         use_ollama = bool(status_info.get("reachable"))
@@ -419,26 +400,52 @@ def execute_workflow(
         adapter_id = adapter.id if adapter else None
         adapter_version = adapter.version if adapter else None
 
-        # Document-group nodes pre-populate state with the source text so AI
-        # nodes downstream can read it via {prospectus_text}.
-        if node.type == "prospectus_loader":
-            chosen = _resolve_prospectus(node, state, prospectuses)
-            if chosen is not None:
-                state["prospectus_text"] = chosen.text
-                state["prospectus_id"] = chosen.id
-                state["prospectus_name"] = chosen.name
-                state["document"] = chosen.identifier or chosen.name
+        # Document Handler reads a file off the host filesystem into the
+        # shared "document_text" slot. AI nodes downstream consume it via
+        # {document_text} in their prompt templates.
+        if node.type == "document_handler":
+            doc_path, doc_filename, doc_text, doc_error = _load_document(node, state)
+            if doc_error is None and doc_text is not None and doc_filename:
+                state["document_text"] = doc_text
+                state["document"] = doc_filename
+                state["document_path"] = doc_path
+                state["document_filename"] = doc_filename
+                status, summary = (
+                    "ok",
+                    f"Loaded '{doc_filename}' ({len(doc_text):,} chars).",
+                )
             else:
-                state.setdefault("prospectus_text", _SAMPLE_PROSPECTUS_TEXT)
-        elif node.type == "pdf_extractor":
-            state.setdefault("pdf_text", state.get("prospectus_text", ""))
+                status, summary = "warn", f"Document load failed: {doc_error}"
+            step_ms = _NODE_STEP_MS
+            cursor = cursor + timedelta(milliseconds=step_ms)
+            trace.append(
+                TraceEntry(
+                    nodeId=node.id,
+                    nodeType=node.type,
+                    label=node.label,
+                    group=node.group,
+                    status=status,
+                    summary=summary,
+                    startedAt=node_started,
+                    finishedAt=cursor,
+                    model=None,
+                    totalTokens=None,
+                    latencyMs=None,
+                    adapterId=adapter_id,
+                    adapterVersion=adapter_version,
+                )
+            )
+            continue
+
+        if node.type == "pdf_extractor":
+            state.setdefault("pdf_text", state.get("document_text", ""))
 
         # Clause extraction is deterministic (regex + keyword classify) so
         # the audit trail can cite which clause drove a verdict. Runs even
         # though the node sits in the AI palette group.
         if node.type == "clause_extractor":
             clauses = clause_extractor.extract_clauses(
-                state.get("prospectus_text", "")
+                state.get("document_text", "")
             )
             state["clauses_list"] = [c.as_dict() for c in clauses]
             state["clauses"] = clause_extractor.render_for_prompt(clauses)

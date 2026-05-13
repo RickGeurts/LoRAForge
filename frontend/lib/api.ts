@@ -112,31 +112,9 @@ export type RunCreate = {
   inputs?: Record<string, unknown>;
 };
 
-export type ProspectusSource = "seeded" | "pasted";
-
-export type Prospectus = {
-  id: string;
-  name: string;
-  identifier: string | null;
-  summary: string | null;
-  text: string;
-  source: ProspectusSource;
-  createdAt: string;
-};
-
-export type ProspectusClause = {
-  section: string;
-  title: string;
-  type: string;
-  text: string;
-};
-
-export type ProspectusCreate = {
-  name: string;
-  identifier?: string | null;
-  summary?: string | null;
-  text: string;
-};
+export type DocumentEntry = { name: string; size: number };
+export type DocumentList = { path: string; files: DocumentEntry[] };
+export type DocumentContent = { path: string; filename: string; text: string };
 
 export type DatasetSource = "file" | "text" | "external" | "mock";
 
@@ -298,14 +276,14 @@ export const api = {
   deleteDataset: (id: string) =>
     requestVoid(`/datasets/${id}`, { method: "DELETE" }),
 
-  prospectuses: () => request<Prospectus[]>("/prospectuses"),
-  prospectus: (id: string) => request<Prospectus>(`/prospectuses/${id}`),
-  prospectusClauses: (id: string) =>
-    request<ProspectusClause[]>(`/prospectuses/${id}/clauses`),
-  createProspectus: (payload: ProspectusCreate) =>
-    request<Prospectus>("/prospectuses", json(payload)),
-  deleteProspectus: (id: string) =>
-    requestVoid(`/prospectuses/${id}`, { method: "DELETE" }),
+  listDocuments: (path: string) =>
+    request<DocumentList>(
+      `/documents/list?path=${encodeURIComponent(path)}`,
+    ),
+  readDocument: (path: string, filename: string) =>
+    request<DocumentContent>(
+      `/documents/read?path=${encodeURIComponent(path)}&filename=${encodeURIComponent(filename)}`,
+    ),
 
   finetuneRuns: () => request<FineTuneRun[]>("/finetune"),
   finetuneRun: (id: string) => request<FineTuneRun>(`/finetune/${id}`),

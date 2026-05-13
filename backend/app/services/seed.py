@@ -6,18 +6,83 @@ it deletes superseded mock datasets by id so the registry shows just one
 hand-crafted MREL clause example after upgrade.
 """
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlmodel import Session, select
 
 from app.models.adapter import Adapter, AdapterTable, EvaluationMetrics
 from app.models.dataset import Dataset, DatasetTable
-from app.models.prospectus import Prospectus, ProspectusTable
 from app.models.run import Run, RunTable
 from app.models.task import Task, TaskTable
 from app.models.workflow import Workflow, WorkflowTable
 from app.services.executor import execute_workflow
 from app.services.mrel_clauses_dataset import build_mrel_clause_rows
 from app.services.templates import mrel_eligibility
+
+_SAMPLE_DOCS_DIR = (
+    Path(__file__).resolve().parent.parent.parent / "data" / "sample-documents"
+)
+
+_SAMPLE_DOCUMENTS: dict[str, str] = {
+    "tier2_2031.txt": (
+        "PROSPECTUS — EUR 750,000,000 Subordinated Notes due 2031\n"
+        "Issuer: ResolutionCo plc (resolution entity of the Group). "
+        "ISIN: XS2031000001.\n\n"
+        "§3 Status: The Notes constitute direct, unsecured and subordinated "
+        "obligations of the Issuer ranking pari passu among themselves and "
+        "behind the claims of all senior creditors.\n\n"
+        "§4.1 Maturity: The Notes mature on 30 November 2031.\n\n"
+        "§4.3 Optional redemption: The Issuer may redeem the Notes in whole "
+        "following a Regulatory Event after the Reset Date, falling five "
+        "years after issuance.\n\n"
+        "§5.2 Ranking: In the event of resolution or winding-up, the Notes "
+        "rank junior to all Senior Preferred and Senior Non-Preferred "
+        "liabilities and senior only to Additional Tier 1 instruments.\n\n"
+        "§7 Governing Law: English law.\n\n"
+        "§9 Issuer: ResolutionCo plc, the resolution entity of the Group."
+    ),
+    "senior_pref_2028.txt": (
+        "PROSPECTUS — EUR 1,000,000,000 Senior Preferred Notes due 2028\n"
+        "Issuer: ResolutionCo plc. ISIN: XS2028000002.\n\n"
+        "§3 Status: The Notes constitute direct, unsecured and unsubordinated "
+        "obligations of the Issuer and rank pari passu with all other "
+        "unsubordinated obligations.\n\n"
+        "§4.1 Maturity: The Notes mature on 15 March 2028.\n\n"
+        "§4.3 Optional redemption: The Notes are not redeemable at the option "
+        "of the Issuer prior to maturity, save for tax events.\n\n"
+        "§5.2 Ranking: In the event of resolution, the Notes rank senior to "
+        "Senior Non-Preferred and Tier 2 liabilities and pari passu with "
+        "general senior creditors.\n\n"
+        "§7 Governing Law: English law.\n\n"
+        "§9 Issuer: ResolutionCo plc, the resolution entity of the Group."
+    ),
+    "covered_2030.txt": (
+        "PROSPECTUS — EUR 500,000,000 Covered Bonds due 2030\n"
+        "Issuer: ResolutionCo Mortgage Bank S.A. ISIN: XS2030000003.\n\n"
+        "§3 Status: The Covered Bonds are secured obligations of the Issuer, "
+        "backed by a dynamic cover pool of residential mortgage loans pursuant "
+        "to applicable Covered Bond legislation.\n\n"
+        "§4.1 Maturity: The Covered Bonds mature on 1 June 2030, with a "
+        "12-month extendible maturity provision.\n\n"
+        "§5.2 Ranking: The Covered Bonds rank pari passu among themselves and "
+        "benefit from preferential claim on the cover pool assets.\n\n"
+        "§7 Governing Law: Luxembourg law.\n\n"
+        "§9 Issuer: ResolutionCo Mortgage Bank S.A., a wholly-owned subsidiary "
+        "specialised in mortgage funding (not the resolution entity)."
+    ),
+}
+
+
+def _write_sample_documents() -> None:
+    """Create the sample-documents directory on disk and populate it.
+
+    Files are only written if missing — analysts can edit them freely.
+    """
+    _SAMPLE_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    for filename, content in _SAMPLE_DOCUMENTS.items():
+        target = _SAMPLE_DOCS_DIR / filename
+        if not target.exists():
+            target.write_text(content, encoding="utf-8")
 
 _SEED_TS = datetime(2026, 5, 5, tzinfo=timezone.utc)
 _SUPERSEDED_DATASET_IDS = ("ds_mrel_corpus", "ds_clauses_v1")
@@ -40,20 +105,31 @@ _INSTRUMENT_PROMPT_V1 = (
     "Briefly classify the financial instrument described in prospectus "
     "'{document}' (e.g. Tier 2 capital, senior unsecured, covered bond)."
 )
-_INSTRUMENT_PROMPT_V2 = (
+_INSTRUMENT_PROMPT_V2_LEGACY = (
     "Classify the financial instrument described in the following "
     "prospectus excerpt (e.g. Tier 2 capital, senior unsecured, AT1, "
     "covered bond):\n\n{prospectus_text}\n\nInstrument type:"
+)
+_INSTRUMENT_PROMPT_V3 = (
+    "Classify the financial instrument described in the following "
+    "document excerpt (e.g. Tier 2 capital, senior unsecured, AT1, "
+    "covered bond):\n\n{document_text}\n\nInstrument type:"
 )
 
 _CLAUSE_PROMPT_V1 = (
     "List the most likely clauses to extract from prospectus '{document}' "
     "that affect MREL eligibility (subordination, ranking, maturity)."
 )
-_CLAUSE_PROMPT_V2 = (
+_CLAUSE_PROMPT_V2_LEGACY = (
     "Extract the clauses from the following prospectus excerpt that "
     "affect MREL eligibility (subordination, ranking, maturity, "
     "governing law). Quote each clause briefly.\n\n{prospectus_text}\n\n"
+    "Relevant clauses:"
+)
+_CLAUSE_PROMPT_V3 = (
+    "Extract the clauses from the following document excerpt that "
+    "affect MREL eligibility (subordination, ranking, maturity, "
+    "governing law). Quote each clause briefly.\n\n{document_text}\n\n"
     "Relevant clauses:"
 )
 
@@ -61,8 +137,8 @@ _CLAUSE_PROMPT_V2 = (
 # prompt_template matches one of these strings was never user-edited.
 _UPGRADABLE_PROMPTS: dict[str, set[str]] = {
     "mrel_classifier": {_MREL_PROMPT_V1},
-    "instrument_classifier": {_INSTRUMENT_PROMPT_V1},
-    "clause_extractor": {_CLAUSE_PROMPT_V1},
+    "instrument_classifier": {_INSTRUMENT_PROMPT_V1, _INSTRUMENT_PROMPT_V2_LEGACY},
+    "clause_extractor": {_CLAUSE_PROMPT_V1, _CLAUSE_PROMPT_V2_LEGACY},
 }
 
 
@@ -93,7 +169,7 @@ def _seed_tasks() -> list[Task]:
                 "Classify a financial instrument by type (Tier 2, AT1, senior "
                 "preferred, covered bond, …)."
             ),
-            promptTemplate=_INSTRUMENT_PROMPT_V2,
+            promptTemplate=_INSTRUMENT_PROMPT_V3,
             expectedOutput="Instrument type label and 1-sentence rationale.",
             nodeGroup="ai",
             defaultBaseModel="llama3.1:8b",
@@ -108,7 +184,7 @@ def _seed_tasks() -> list[Task]:
                 "Extract clauses relevant to MREL eligibility (subordination, "
                 "ranking, maturity, governing law) from a prospectus."
             ),
-            promptTemplate=_CLAUSE_PROMPT_V2,
+            promptTemplate=_CLAUSE_PROMPT_V3,
             expectedOutput=(
                 "Bulleted list of clause references with a one-line excerpt each."
             ),
@@ -179,80 +255,6 @@ def _seed_adapters() -> list[Adapter]:
     ]
 
 
-_SEED_PROSPECTUSES: list[Prospectus] = [
-    Prospectus(
-        id="pr_tier2_2031",
-        name="ResolutionCo 2031 Subordinated Notes",
-        identifier="XS2031000001",
-        summary="EUR 750m Tier 2 subordinated notes, issued by the resolution entity.",
-        text=(
-            "PROSPECTUS — EUR 750,000,000 Subordinated Notes due 2031\n"
-            "Issuer: ResolutionCo plc (resolution entity of the Group). "
-            "ISIN: XS2031000001.\n\n"
-            "§3 Status: The Notes constitute direct, unsecured and subordinated "
-            "obligations of the Issuer ranking pari passu among themselves and "
-            "behind the claims of all senior creditors.\n\n"
-            "§4.1 Maturity: The Notes mature on 30 November 2031.\n\n"
-            "§4.3 Optional redemption: The Issuer may redeem the Notes in whole "
-            "following a Regulatory Event after the Reset Date, falling five "
-            "years after issuance.\n\n"
-            "§5.2 Ranking: In the event of resolution or winding-up, the Notes "
-            "rank junior to all Senior Preferred and Senior Non-Preferred "
-            "liabilities and senior only to Additional Tier 1 instruments.\n\n"
-            "§7 Governing Law: English law.\n\n"
-            "§9 Issuer: ResolutionCo plc, the resolution entity of the Group."
-        ),
-        source="seeded",
-        createdAt=_SEED_TS,
-    ),
-    Prospectus(
-        id="pr_senior_pref_2028",
-        name="ResolutionCo 2028 Senior Preferred Notes",
-        identifier="XS2028000002",
-        summary="EUR 1bn senior preferred notes — unsubordinated, ranks with general senior creditors.",
-        text=(
-            "PROSPECTUS — EUR 1,000,000,000 Senior Preferred Notes due 2028\n"
-            "Issuer: ResolutionCo plc. ISIN: XS2028000002.\n\n"
-            "§3 Status: The Notes constitute direct, unsecured and unsubordinated "
-            "obligations of the Issuer and rank pari passu with all other "
-            "unsubordinated obligations.\n\n"
-            "§4.1 Maturity: The Notes mature on 15 March 2028.\n\n"
-            "§4.3 Optional redemption: The Notes are not redeemable at the option "
-            "of the Issuer prior to maturity, save for tax events.\n\n"
-            "§5.2 Ranking: In the event of resolution, the Notes rank senior to "
-            "Senior Non-Preferred and Tier 2 liabilities and pari passu with "
-            "general senior creditors.\n\n"
-            "§7 Governing Law: English law.\n\n"
-            "§9 Issuer: ResolutionCo plc, the resolution entity of the Group."
-        ),
-        source="seeded",
-        createdAt=_SEED_TS,
-    ),
-    Prospectus(
-        id="pr_covered_2030",
-        name="ResolutionCo Mortgage Bank 2030 Covered Bonds",
-        identifier="XS2030000003",
-        summary="EUR 500m covered bonds — secured by mortgage cover pool, issued by funding subsidiary.",
-        text=(
-            "PROSPECTUS — EUR 500,000,000 Covered Bonds due 2030\n"
-            "Issuer: ResolutionCo Mortgage Bank S.A. ISIN: XS2030000003.\n\n"
-            "§3 Status: The Covered Bonds are secured obligations of the Issuer, "
-            "backed by a dynamic cover pool of residential mortgage loans pursuant "
-            "to applicable Covered Bond legislation.\n\n"
-            "§4.1 Maturity: The Covered Bonds mature on 1 June 2030, with a "
-            "12-month extendible maturity provision.\n\n"
-            "§5.2 Ranking: The Covered Bonds rank pari passu among themselves and "
-            "benefit from preferential claim on the cover pool assets.\n\n"
-            "§7 Governing Law: Luxembourg law.\n\n"
-            "§9 Issuer: ResolutionCo Mortgage Bank S.A., a wholly-owned subsidiary "
-            "specialised in mortgage funding (not the resolution entity)."
-        ),
-        source="seeded",
-        createdAt=_SEED_TS,
-    ),
-]
-
-
 def _mrel_clause_dataset() -> Dataset:
     rows = build_mrel_clause_rows()
     return Dataset(
@@ -275,7 +277,12 @@ def _mrel_clause_dataset() -> Dataset:
 
 
 def _seed_workflows() -> list[Workflow]:
-    return [mrel_eligibility(workflow_id="wf_mrel_template", ts=_SEED_TS)]
+    wf = mrel_eligibility(workflow_id="wf_mrel_template", ts=_SEED_TS)
+    docs_path = str(_SAMPLE_DOCS_DIR)
+    for node in wf.nodes:
+        if node.type == "document_handler":
+            node.config = {**node.config, "path": docs_path, "filename": "tier2_2031.txt"}
+    return [wf]
 
 
 def _seed_runs(workflows: list[Workflow]) -> list[Run]:
@@ -343,25 +350,53 @@ def _reconcile_tasks(session: Session) -> None:
             session.add(existing)
 
 
-def _reconcile_prospectuses(session: Session) -> None:
-    # Insert any seeded prospectus that's missing. We don't refresh in place:
-    # if the user edited or pasted their own, leave it alone.
-    for prospectus in _SEED_PROSPECTUSES:
-        existing = session.get(ProspectusTable, prospectus.id)
-        if existing is None:
-            session.add(ProspectusTable.from_api(prospectus))
+def _migrate_legacy_workflow_nodes(session: Session) -> None:
+    """One-time rename of prospectus_loader nodes to document_handler.
+
+    Existing workflows in the DB still carry the old node type; without
+    this rewrite the executor wouldn't recognise them as input nodes and
+    the migrated MREL template would have a broken root.
+    """
+    docs_path = str(_SAMPLE_DOCS_DIR)
+    for wf_row in session.exec(select(WorkflowTable)).all():
+        legacy = any(
+            (n.get("type") == "prospectus_loader") for n in (wf_row.nodes or [])
+        )
+        if not legacy:
+            continue
+        wf_row.nodes = [
+            {
+                **n,
+                "type": "document_handler",
+                "label": "Document Handler",
+                "config": {
+                    **{
+                        k: v
+                        for k, v in (n.get("config") or {}).items()
+                        if k != "prospectus_id"
+                    },
+                    "path": docs_path,
+                    "filename": "tier2_2031.txt",
+                },
+            }
+            if n.get("type") == "prospectus_loader"
+            else n
+            for n in (wf_row.nodes or [])
+        ]
+        session.add(wf_row)
 
 
 def seed_if_empty(session: Session) -> None:
+    _write_sample_documents()
     _reconcile_tasks(session)
     if session.exec(select(AdapterTable)).first() is None:
         for adapter in _seed_adapters():
             session.add(AdapterTable.from_api(adapter))
     _reconcile_datasets(session)
-    _reconcile_prospectuses(session)
     if session.exec(select(WorkflowTable)).first() is None:
         for workflow in _seed_workflows():
             session.add(WorkflowTable.from_api(workflow))
+    _migrate_legacy_workflow_nodes(session)
     if session.exec(select(RunTable)).first() is None:
         workflows = _seed_workflows()
         for run in _seed_runs(workflows):

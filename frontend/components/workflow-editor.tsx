@@ -2,7 +2,7 @@
 
 import "@xyflow/react/dist/style.css";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Background,
@@ -28,8 +28,8 @@ import {
 import {
   api,
   type Adapter,
+  type DocumentEntry,
   type NodeGroup,
-  type Prospectus,
   type Task,
   type Workflow as ApiWorkflow,
 } from "@/lib/api";
@@ -39,7 +39,7 @@ type PaletteItem = { group: NodeGroup; type: string; label: string };
 // Non-AI nodes are executor primitives, not user-defined tasks. They stay
 // hardcoded. AI palette entries come from the Task registry at runtime.
 const STATIC_PALETTE: PaletteItem[] = [
-  { group: "documents", type: "prospectus_loader", label: "Prospectus Loader" },
+  { group: "documents", type: "document_handler", label: "Document Handler" },
   { group: "documents", type: "pdf_extractor", label: "PDF Extractor" },
   { group: "rules", type: "validator", label: "Validator" },
   { group: "rules", type: "confidence_filter", label: "Confidence Filter" },
@@ -134,6 +134,11 @@ function LoraForgeNode({ data }: NodeProps<FlowNode>) {
         </p>
       ) : data.group === "ai" ? (
         <p className="mt-1 text-[10px] text-zinc-400 italic">no adapter bound</p>
+      ) : null}
+      {data.nodeType === "document_handler" && data.config.filename ? (
+        <p className="mt-1 text-[10px] font-mono text-zinc-700 dark:text-zinc-300 bg-white/60 dark:bg-zinc-900/60 rounded px-1 py-0.5 truncate max-w-[180px]">
+          📄 {String(data.config.filename)}
+        </p>
       ) : null}
       <Handle type="source" position={Position.Right} className="!bg-zinc-400" />
     </div>
@@ -247,21 +252,14 @@ export function WorkflowEditor({
   workflow,
   adapters,
   aiTasks,
-  prospectuses,
 }: {
   workflow: ApiWorkflow;
   adapters: Adapter[];
   aiTasks: Task[];
-  prospectuses: Prospectus[];
 }) {
   return (
     <ReactFlowProvider>
-      <EditorInner
-        workflow={workflow}
-        adapters={adapters}
-        aiTasks={aiTasks}
-        prospectuses={prospectuses}
-      />
+      <EditorInner workflow={workflow} adapters={adapters} aiTasks={aiTasks} />
     </ReactFlowProvider>
   );
 }
@@ -270,12 +268,10 @@ function EditorInner({
   workflow,
   adapters,
   aiTasks,
-  prospectuses,
 }: {
   workflow: ApiWorkflow;
   adapters: Adapter[];
   aiTasks: Task[];
-  prospectuses: Prospectus[];
 }) {
   const initial = useMemo(
     () => workflowToFlow(workflow, adapters),
@@ -286,7 +282,7 @@ function EditorInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const { screenToFlowPosition } = useReactFlow();
   const router = useRouter();
@@ -371,7 +367,7 @@ function EditorInner({
       await api.replaceWorkflow(workflow.id, updated);
       const run = await api.createRun({
         workflowId: workflow.id,
-        inputs: { document: "sample_prospectus.pdf" },
+        inputs: {},
       });
       router.push(`/runs/${run.id}`);
     } catch (e) {
@@ -383,10 +379,8 @@ function EditorInner({
     }
   }, [workflow, nodes, edges, router]);
 
-  const onSelectionChange = useCallback(
-    ({ nodes: selected }: { nodes: Node[]; edges: Edge[] }) => {
-      setSelectedNodeId(selected[0]?.id ?? null);
-    },
+  const onNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: Node) => setEditingNodeId(node.id),
     [],
   );
 
@@ -428,7 +422,7 @@ function EditorInner({
     [setNodes],
   );
 
-  const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
+  const editingNode = nodes.find((n) => n.id === editingNodeId) ?? null;
 
   return (
     <div className="flex h-[calc(100vh-12rem)] min-h-[480px] border-t border-zinc-200 dark:border-zinc-800">
@@ -438,7 +432,7 @@ function EditorInner({
             Node palette
           </p>
           <p className="mt-1 text-[11px] text-zinc-500">
-            Drag a node onto the canvas.
+            Drag a node onto the canvas. Double-click a node to configure it.
           </p>
         </div>
         <div className="p-3 space-y-4">
@@ -497,7 +491,7 @@ function EditorInner({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
-          onSelectionChange={onSelectionChange}
+          onNodeDoubleClick={onNodeDoubleClick}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
@@ -510,144 +504,16 @@ function EditorInner({
         </ReactFlow>
       </div>
 
-      <Inspector
-        node={selectedNode}
-        adapters={adapters}
-        prospectuses={prospectuses}
-        onAdapterChange={setNodeAdapter}
-        onConfigChange={setNodeConfigValue}
-      />
+      {editingNode ? (
+        <NodeConfigDrawer
+          node={editingNode}
+          adapters={adapters}
+          onClose={() => setEditingNodeId(null)}
+          onAdapterChange={setNodeAdapter}
+          onConfigChange={setNodeConfigValue}
+        />
+      ) : null}
     </div>
-  );
-}
-
-function Inspector({
-  node,
-  adapters,
-  prospectuses,
-  onAdapterChange,
-  onConfigChange,
-}: {
-  node: FlowNode | null;
-  adapters: Adapter[];
-  prospectuses: Prospectus[];
-  onAdapterChange: (nodeId: string, adapterId: string | null) => void;
-  onConfigChange: (nodeId: string, key: string, value: string | null) => void;
-}) {
-  if (!node) {
-    return (
-      <aside className="w-64 shrink-0 border-l border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 p-4 text-xs text-zinc-500">
-        Select a node to inspect or bind an adapter.
-      </aside>
-    );
-  }
-
-  const isAi = node.data.group === "ai";
-  const isProspectusLoader = node.data.nodeType === "prospectus_loader";
-  // Adapters in the registry that match this node's task type — keeps the
-  // dropdown short and reflects the "constrained workflow" principle.
-  const compatible = adapters.filter((a) => a.taskType === node.data.nodeType);
-  const incompatible = adapters.filter((a) => a.taskType !== node.data.nodeType);
-  const selectedProspectusId =
-    (node.data.config["prospectus_id"] as string | undefined) ?? "";
-
-  return (
-    <aside className="w-64 shrink-0 border-l border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 p-4 overflow-y-auto">
-      <p className="text-xs uppercase tracking-wide text-zinc-500">
-        Inspector
-      </p>
-      <p className="mt-2 text-sm font-medium text-zinc-900 dark:text-zinc-50">
-        {node.data.label}
-      </p>
-      <p className="mt-0.5 text-[11px] font-mono text-zinc-500">
-        {node.data.nodeType} · {node.data.group}
-      </p>
-
-      {isProspectusLoader ? (
-        <div className="mt-4">
-          <label className="text-[11px] uppercase tracking-wide text-zinc-500">
-            Prospectus
-          </label>
-          <select
-            value={selectedProspectusId}
-            onChange={(e) =>
-              onConfigChange(node.id, "prospectus_id", e.target.value || null)
-            }
-            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1.5 text-xs"
-          >
-            <option value="">(first registered)</option>
-            {prospectuses.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-                {p.identifier ? ` · ${p.identifier}` : ""}
-              </option>
-            ))}
-          </select>
-          <p className="mt-3 text-[11px] text-zinc-500 leading-relaxed">
-            The selected prospectus&apos;s text is loaded into the run state.
-            Manage the library on the{" "}
-            <a href="/prospectuses" className="underline">
-              Prospectuses
-            </a>{" "}
-            page.
-          </p>
-        </div>
-      ) : null}
-
-      {isAi ? (
-        <div className="mt-4">
-          <label className="text-[11px] uppercase tracking-wide text-zinc-500">
-            Adapter binding
-          </label>
-          <select
-            value={node.data.adapterId ?? ""}
-            onChange={(e) =>
-              onAdapterChange(node.id, e.target.value || null)
-            }
-            className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1.5 text-xs"
-          >
-            <option value="">(no adapter)</option>
-            {compatible.length > 0 ? (
-              <optgroup label={`Matching ${node.data.nodeType}`}>
-                {compatible.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} v{a.version} · {a.baseModel}
-                  </option>
-                ))}
-              </optgroup>
-            ) : null}
-            {incompatible.length > 0 ? (
-              <optgroup label="Other adapters (task-type mismatch)">
-                {incompatible.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} v{a.version} · {a.taskType}
-                  </option>
-                ))}
-              </optgroup>
-            ) : null}
-          </select>
-          {node.data.adapterId ? (
-            <button
-              type="button"
-              onClick={() => onAdapterChange(node.id, null)}
-              className="mt-2 text-[11px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-50 underline"
-            >
-              Detach adapter
-            </button>
-          ) : null}
-          <p className="mt-3 text-[11px] text-zinc-500 leading-relaxed">
-            The bound adapter&apos;s base model is used at run time. If it
-            isn&apos;t installed in Ollama, the executor falls back to an
-            available model and the trace records a warning.
-          </p>
-        </div>
-      ) : !isProspectusLoader ? (
-        <p className="mt-4 text-[11px] text-zinc-500 leading-relaxed">
-          Adapter binding only applies to AI-group nodes. This node runs
-          deterministic logic.
-        </p>
-      ) : null}
-    </aside>
   );
 }
 
@@ -665,5 +531,262 @@ function PaletteCard({ item }: { item: PaletteItem }) {
     >
       {item.label}
     </div>
+  );
+}
+
+function NodeConfigDrawer({
+  node,
+  adapters,
+  onClose,
+  onAdapterChange,
+  onConfigChange,
+}: {
+  node: FlowNode;
+  adapters: Adapter[];
+  onClose: () => void;
+  onAdapterChange: (nodeId: string, adapterId: string | null) => void;
+  onConfigChange: (nodeId: string, key: string, value: string | null) => void;
+}) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const isAi = node.data.group === "ai";
+  const isDocumentHandler = node.data.nodeType === "document_handler";
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div
+        className="flex-1 bg-black/40"
+        onClick={onClose}
+        aria-label="Close"
+      />
+      <aside className="w-[28rem] max-w-full bg-white dark:bg-zinc-950 shadow-2xl border-l border-zinc-200 dark:border-zinc-800 flex flex-col">
+        <header className="px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-start justify-between">
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+              Configure node
+            </p>
+            <p className="mt-1 text-base font-medium text-zinc-900 dark:text-zinc-50">
+              {node.data.label}
+            </p>
+            <p className="mt-0.5 text-[11px] font-mono text-zinc-500">
+              {node.data.nodeType} · {node.data.group}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-50 px-2 py-1 rounded"
+            aria-label="Close drawer"
+          >
+            ✕
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+          {isDocumentHandler ? (
+            <DocumentHandlerConfig node={node} onConfigChange={onConfigChange} />
+          ) : null}
+          {isAi ? (
+            <AdapterBindingConfig
+              node={node}
+              adapters={adapters}
+              onAdapterChange={onAdapterChange}
+            />
+          ) : null}
+          {!isAi && !isDocumentHandler ? (
+            <p className="text-sm text-zinc-500 leading-relaxed">
+              This node runs deterministic logic and has no configurable
+              parameters yet.
+            </p>
+          ) : null}
+        </div>
+
+        <footer className="px-5 py-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-sm px-3 py-1.5 rounded-md bg-zinc-900 text-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 hover:opacity-90"
+          >
+            Done
+          </button>
+        </footer>
+      </aside>
+    </div>
+  );
+}
+
+function DocumentHandlerConfig({
+  node,
+  onConfigChange,
+}: {
+  node: FlowNode;
+  onConfigChange: (nodeId: string, key: string, value: string | null) => void;
+}) {
+  const path = (node.data.config.path as string | undefined) ?? "";
+  const filename = (node.data.config.filename as string | undefined) ?? "";
+  const [pathDraft, setPathDraft] = useState(path);
+  const [files, setFiles] = useState<DocumentEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => setPathDraft(path), [path]);
+
+  const refresh = useCallback(
+    async (p: string) => {
+      if (!p.trim()) {
+        setFiles([]);
+        setError(null);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await api.listDocuments(p);
+        setFiles(res.files);
+      } catch (err) {
+        setFiles([]);
+        setError(err instanceof Error ? err.message : "Failed to list files.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    refresh(path);
+  }, [path, refresh]);
+
+  const commitPath = () => {
+    const trimmed = pathDraft.trim();
+    if (trimmed !== path) {
+      onConfigChange(node.id, "path", trimmed || null);
+      // Filename refers to a file in the previous path — invalidate it.
+      if (filename) onConfigChange(node.id, "filename", null);
+    }
+  };
+
+  return (
+    <section className="space-y-3">
+      <h3 className="text-xs uppercase tracking-wide text-zinc-500">
+        Document source
+      </h3>
+      <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+        Absolute directory path
+        <input
+          value={pathDraft}
+          onChange={(e) => setPathDraft(e.target.value)}
+          onBlur={commitPath}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitPath();
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          placeholder="C:\\path\\to\\documents"
+          className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-sm font-mono text-zinc-900 dark:text-zinc-50"
+        />
+        <span className="block mt-1 text-[11px] text-zinc-500 normal-case tracking-normal">
+          Filesystem path on the backend host. Only <code>.txt</code> /{" "}
+          <code>.md</code> files are listed.
+        </span>
+      </label>
+
+      <label className="block text-[11px] uppercase tracking-wide text-zinc-500">
+        File
+        <select
+          value={filename}
+          disabled={loading || !path || files.length === 0}
+          onChange={(e) =>
+            onConfigChange(node.id, "filename", e.target.value || null)
+          }
+          className="mt-1 block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-sm disabled:opacity-50"
+        >
+          <option value="">(first available)</option>
+          {files.map((f) => (
+            <option key={f.name} value={f.name}>
+              {f.name} · {(f.size / 1024).toFixed(1)} KB
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {loading ? (
+        <p className="text-[11px] text-zinc-500">Listing files…</p>
+      ) : error ? (
+        <p className="text-[11px] text-red-700 dark:text-red-300">{error}</p>
+      ) : path && files.length === 0 ? (
+        <p className="text-[11px] text-zinc-500">
+          No <code>.txt</code> or <code>.md</code> files in that directory.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function AdapterBindingConfig({
+  node,
+  adapters,
+  onAdapterChange,
+}: {
+  node: FlowNode;
+  adapters: Adapter[];
+  onAdapterChange: (nodeId: string, adapterId: string | null) => void;
+}) {
+  const compatible = adapters.filter((a) => a.taskType === node.data.nodeType);
+  const incompatible = adapters.filter((a) => a.taskType !== node.data.nodeType);
+
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs uppercase tracking-wide text-zinc-500">
+        Adapter binding
+      </h3>
+      <select
+        value={node.data.adapterId ?? ""}
+        onChange={(e) => onAdapterChange(node.id, e.target.value || null)}
+        className="block w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-sm"
+      >
+        <option value="">(no adapter)</option>
+        {compatible.length > 0 ? (
+          <optgroup label={`Matching ${node.data.nodeType}`}>
+            {compatible.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} v{a.version} · {a.baseModel}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+        {incompatible.length > 0 ? (
+          <optgroup label="Other adapters (task-type mismatch)">
+            {incompatible.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} v{a.version} · {a.taskType}
+              </option>
+            ))}
+          </optgroup>
+        ) : null}
+      </select>
+      {node.data.adapterId ? (
+        <button
+          type="button"
+          onClick={() => onAdapterChange(node.id, null)}
+          className="text-[11px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-50 underline"
+        >
+          Detach adapter
+        </button>
+      ) : null}
+      <p className="text-[11px] text-zinc-500 leading-relaxed">
+        The bound adapter&apos;s base model is used at run time. If it
+        isn&apos;t installed in Ollama, the executor falls back to an
+        available model and the trace records a warning.
+      </p>
+    </section>
   );
 }
